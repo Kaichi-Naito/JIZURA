@@ -1,0 +1,140 @@
+name: Test persisted project audio
+
+on:
+  push:
+    branches:
+      - persist-project-audio
+    paths:
+      - ".github/workflows/test-persisted-audio.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Test audio persistence and embedded project audio
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page()
+                  errors = []
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#previewVolume")
+
+                  result = await page.evaluate(r"""
+                  async () => {
+                    function makeWav() {
+                      const sr = 8000, seconds = 2, n = sr * seconds;
+                      const ab = new ArrayBuffer(44 + n * 2);
+                      const v = new DataView(ab);
+                      const s = (o, x) => { for (let i=0;i<x.length;i++) v.setUint8(o+i,x.charCodeAt(i)); };
+                      s(0,'RIFF'); v.setUint32(4,36+n*2,true); s(8,'WAVE'); s(12,'fmt ');
+                      v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+                      v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+                      s(36,'data'); v.setUint32(40,n*2,true);
+                      for (let i=0;i<n;i++) {
+                        const amp = Math.sin(2*Math.PI*220*i/sr) * 0.18;
+                        v.setInt16(44+i*2, Math.round(amp*32767), true);
+                      }
+                      return new File([ab], 'persist-test.wav', {type:'audio/wav', lastModified:123456789});
+                    }
+
+                    const file = makeWav();
+                    const ok = await J.uiApi.loadAudioFile(file);
+                    if (!ok || !J.ui.audio) throw new Error('initial audio load failed');
+
+                    const vol = document.querySelector('#previewVolume');
+                    vol.value = '143';
+                    vol.dispatchEvent(new Event('input', {bubbles:true}));
+                    await new Promise(r => setTimeout(r, 50));
+                    if (Math.abs(J.ui.project.previewVolume - 1.43) > 1e-9) throw new Error('preview volume was not stored in project');
+
+                    const payload = await J.uiApi.projectPayloadForSave();
+                    if (!payload._audioAsset || !payload._audioAsset.dataUrl.startsWith('data:audio/wav')) throw new Error('project payload has no embedded audio');
+                    if (payload.previewVolume !== 1.43) throw new Error('project payload lost preview volume');
+                    if (!payload.audio || payload.audio.name !== 'persist-test.wav') throw new Error('project audio metadata missing');
+
+                    const originalId = J.ui.project.audio.id;
+                    J.ui.audio = null; J.ui.audioSource = null;
+                    const restored = await J.uiApi.restoreProjectAudio();
+                    if (!restored || !J.ui.audio || J.ui.audio.name !== 'persist-test.wav') throw new Error('IndexedDB restore failed');
+
+                    // Simulate loading this project on another machine/browser: use a foreign id,
+                    // so restoration must come from the embedded bytes rather than the existing record.
+                    const portable = JSON.parse(JSON.stringify(payload));
+                    portable.audio.id = 'foreign-project-audio-id';
+                    const loaded = await J.uiApi.applyProjectData(portable);
+                    if (!loaded || !J.ui.audio || J.ui.audio.name !== 'persist-test.wav') throw new Error('embedded project audio restore failed');
+                    if (J.ui.project.audio.id !== 'foreign-project-audio-id') throw new Error('embedded audio did not retain project id');
+                    if (Math.abs(J.ui.project.previewVolume - 1.43) > 1e-9) throw new Error('embedded project lost preview volume');
+
+                    return {
+                      ok:true,
+                      name:J.ui.audio.name,
+                      duration:J.ui.audio.duration,
+                      previewVolume:J.ui.project.previewVolume,
+                      embeddedBytes:payload._audioAsset.dataUrl.length,
+                      originalId,
+                      loadedId:J.ui.project.audio.id
+                    };
+                  }
+                  """)
+                  print(result)
+
+                  # applyProjectData flushes local autosave and persists the embedded audio under the new id.
+                  # Reloading the page must restore both song and preview volume without user interaction.
+                  await page.reload()
+                  await page.wait_for_selector("#previewVolume")
+                  await page.wait_for_function("() => !!J.ui && !!J.ui.audio")
+                  after = await page.evaluate("""() => ({
+                    name:J.ui.audio && J.ui.audio.name,
+                    volume:J.ui.project.previewVolume,
+                    slider:document.querySelector('#previewVolume').value,
+                    label:document.querySelector('#audioName').textContent,
+                    audioId:J.ui.project.audio && J.ui.project.audio.id
+                  })""")
+                  if after["name"] != "persist-test.wav":
+                      raise RuntimeError(f"reload did not restore audio: {after}")
+                  if abs(float(after["volume"]) - 1.43) > 1e-9 or after["slider"] != "143":
+                      raise RuntimeError(f"reload did not restore preview volume: {after}")
+                  if after["audioId"] != "foreign-project-audio-id":
+                      raise RuntimeError(f"reload restored wrong audio id: {after}")
+                  if errors:
+                      raise RuntimeError("page errors: " + " | ".join(errors))
+                  print({"reload": after})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
