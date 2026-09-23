@@ -96,6 +96,10 @@ h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 1
 .syntax ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audio-name { font-size: 12px; overflow-wrap: anywhere; }
+.preview-volume { display: grid; grid-template-columns: auto minmax(90px, 1fr) 44px; gap: 4px 8px; align-items: center; font-size: 11px; color: var(--muted); }
+.preview-volume input { width: 100%; accent-color: var(--amber); }
+.preview-volume output { text-align: right; color: var(--text); }
+.preview-volume small { grid-column: 2 / 4; color: var(--faint); }
 .fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
 .field input, .field select { width: 100%; }
@@ -118,8 +122,14 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .time { width: 100%; padding: 3px 5px; font-size: 12px; }
 .ln .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
-.ln .tools { display: flex; gap: 4px; flex: none; }
-.ln .tools select { padding: 2px 4px; font-size: 11px; max-width: 92px; }
+.ln .tools { display: flex; gap: 4px; flex: none; align-items: center; }
+.ln .tools select, .ln .layout-trigger { padding: 2px 4px; font-size: 11px; max-width: 92px; min-width: 0; }
+.ln .line-style { width: 92px; }
+.ln .layout-trigger { width: 92px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.layout-menu { position: fixed; z-index: 100; width: 230px; max-height: min(360px, 55vh); overflow-y: auto; padding: 5px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel); box-shadow: 0 10px 36px rgba(0,0,0,.55); overscroll-behavior: contain; }
+.layout-menu button { display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 2px; background: transparent; text-align: left; font-size: 12px; color: var(--text); }
+.layout-menu button:hover, .layout-menu button.previewing { background: var(--raised2); color: var(--cyan); }
+.layout-menu button.selected { color: var(--amber); }
 .ln .cuts { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
 .ln .cuts span { font-size: 10px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; }
 .ln .cuts span:hover { color: var(--text); border-color: var(--amber); }
@@ -337,6 +347,12 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
           <label class="file" title="mp3 / wav / m4a など">曲を読み込む<input id="audioFile" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"></label>
           <button id="btnTap" title="曲を再生しながら各行の頭でタップ">タップで同期</button>
         </div>
+        <label class="preview-volume">
+          <span>プレビュー音量</span>
+          <input id="previewVolume" type="range" min="0" max="200" step="1" value="100" aria-label="プレビュー音量">
+          <output id="previewVolumeValue" class="mono">100%</output>
+          <small>書き出しは常に100%</small>
+        </label>
         <div class="fields pro-only">
           <label class="field">BPM<input id="bpm" type="number" min="0" max="300" step="0.1" placeholder="自動"></label>
           <label class="field">開始(秒)<input id="offset" type="number" min="0" step="0.05"></label>
@@ -432,7 +448,9 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
       </nav>
 
       <div class="tabpane" data-pane="style">
+        <h3 style="margin-top:0">全体スタイル</h3>
         <div id="styleGrid" class="style-grid"></div>
+        <p class="note">ここはプロジェクト全体の基準です。各行のスタイルは左の「行とカット」で個別に指定できます。配色は全行共通です。</p>
         <h3>フォントの役割</h3>
         <div id="fontRoles"></div>
         <div class="row" style="margin-top:8px">
@@ -786,6 +804,7 @@ J.fontsOfPlan = (plan) => {
   const set = new Set(['mono']);
   if (!plan) return [...set];
   for (const r of Object.values(plan.style.fonts || {})) for (const k of r) set.add(k);
+  for (const st of Object.values(plan.styles || {})) for (const r of Object.values((st && st.fonts) || {})) for (const k of r) set.add(k);
   for (const c of plan.cuts || []) for (const v of Object.values(c.params || {})) {
     if (typeof v === 'string' && J.FONTS[v]) set.add(v);
     else if (Array.isArray(v)) v.forEach(x => { if (typeof x === 'string' && J.FONTS[x]) set.add(x); });
@@ -1437,9 +1456,7 @@ J.STYLES = {
 J.STYLE_ORDER = ['noir', 'crimson', 'caution', 'magenta', 'paper', 'hud', 'mint', 'specimen', 'transit', 'blueprint', 'rouge', 'mono'];
 
 /* resolve style + user colour/font overrides into an effective style */
-J.resolveStyle = (project) => {
-  const base = J.STYLES[project.style] || J.STYLES.noir;
-  const st = JSON.parse(JSON.stringify(base));
+function applyProjectColours(st, project) {
   const ov = project.colors || {};
   // base colours (background / text) replace the main scheme only
   if (ov.enabled) st.schemes[0] = Object.assign({}, st.schemes[0], pickDefined(ov, ['bg', 'fg', 'sub']));
@@ -1448,17 +1465,42 @@ J.resolveStyle = (project) => {
     st.schemes = st.schemes.map(s => {
       const o = Object.assign({}, s);
       if (ov.accent) { o.accent = J.fitContrast(ov.accent, s.bg, 2.4); if (s.ink === s.accent) o.ink = o.accent; }
-      // ghosts only need to stay visible against this scheme's background
       if (ov.ghostA) o.ghostA = J.fitContrast(ov.ghostA, s.bg, 1.35);
       if (ov.ghostB) o.ghostB = J.fitContrast(ov.ghostB, s.bg, 1.35);
       if (ov.accent && s.grad) o.grad = [J.fitContrast(ov.accent, s.bg, 2.4), J.mix(ov.accent, '#000000', 0.7)];
       return o;
     });
   }
+}
+function applyProjectFonts(st, project) {
   const fo = project.fonts || {};
   for (const role of ['display', 'serif', 'body']) if (fo[role] && J.FONTS[fo[role]]) st.fonts[role] = [fo[role]];
+}
+J.resolveStyle = (project) => {
+  const base = J.STYLES[project.style] || J.STYLES.noir;
+  const st = JSON.parse(JSON.stringify(base));
+  applyProjectColours(st, project);
+  applyProjectFonts(st, project);
   if (J.keyMode(project)) keyStyle(st);
   return st;
+};
+/* A per-line style changes typography / texture / tendencies, but colour stays project-global.
+   The global style (plus the project's explicit colour overrides) is therefore always the palette source. */
+J.resolveLineStyle = (project, styleKey) => {
+  if (!styleKey || styleKey === project.style || !J.STYLES[styleKey]) return J.resolveStyle(project);
+  const local = JSON.parse(JSON.stringify(J.STYLES[styleKey]));
+  const palette = J.resolveStyle(project);
+  local.schemes = palette.schemes.map(s => {
+    const o = JSON.parse(JSON.stringify(s));
+    if (local.useGrad && !o.grad) o.grad = [o.accent || o.fg, o.accent2 || o.fg];
+    return o;
+  });
+  applyProjectFonts(local, project);
+  if (J.keyMode(project)) {
+    local.texture = { grain: 0, paper: 0, scan: 0 };
+    local.key = true;
+  }
+  return local;
 };
 /* ---- 合成用の背景（グリーンバック / ブラックバック） ----
    Every scheme becomes white-on-black (so every part behaves as on a dark background), textures go away,
@@ -2899,6 +2941,7 @@ J.defaultProject = () => ({
   extra: false,                   // random picks may use the parts added after the first version (追加分)
   wa: true,                       // …and the 和風 motifs (提灯・障子・家紋…) — applied after 'extra'
   keyBg: 'off',                   // 合成用の背景: 'off' | 'green' (グリーンバック) | 'black' (ブラックバック)
+  previewVolume: 1,                 // editor playback only; exports always use the source audio at 100%
   seed: 20260922,
   aspect: '16:9', res: 1080, fps: 24,
   fx: { motion: 0.7, glitch: 0.55, chroma: 0.7, decor: 0.5, density: 0.55, texture: 0.6, flash: true, onTwos: true, koma: 12, hud: 'auto', bgSwitch: 0.35 },
@@ -3060,7 +3103,7 @@ J.plan = (project, audio) => {
   for (const g of J.GROUP_KEYS) { en[g] = {}; const src = (project.enabled || {})[g] || {}; for (const k of J.order(g)) en[g][k] = src[k] !== false && (!J.randomOk || J.randomOk(project, g, k)); }
   const plan = {
     version: 1, generator: 'JIZURA', title, artist, W, H, fps: project.fps || 24,
-    duration: tm.duration, styleKey: project.style, style: st, fx, seed: project.seed,
+    duration: tm.duration, styleKey: project.style, style: st, styles: { [project.style]: st }, fx, seed: project.seed,
     lines: [], cuts: [], events: [], beats: audio && audio.beats ? audio.beats.slice() : [],
     hud: fx.hud === 'on' ? true : fx.hud === 'off' ? false : !!st.hud,
     keyBg: J.keyMode ? J.keyMode(project) : null,   // 'green' | 'black' | null — 合成用の背景
@@ -3074,19 +3117,22 @@ J.plan = (project, audio) => {
     for (const k of [lo - 1, lo]) if (k >= 0 && k < beats.length && Math.abs(beats[k] - t) < bd) { bd = Math.abs(beats[k] - t); best = beats[k]; }
     return best;
   };
-  const nSchemes = st.schemes.length;
   const addEvent = (t, type, amp, dur) => plan.events.push({ t, type, amp, dur });
 
   // title card
   const firstStart = tm.starts.length ? tm.starts[0] : 0;
   if (title && firstStart >= 1.1) {
     const rng = J.rng(J.h(project.seed, 999));
-    plan.cuts.push(makeCut({ text: title, note: artist, lineText: title, line: -1, start: 0.1, end: firstStart - 0.04, layout: 'title', enter: rng.pick(['blur', 'type', 'wipe', 'assemble']), exit: rng.pick(['blur', 'drift', 'wipe']), hold: 'still', params: J.LAYOUTS.title.plan(rng, {}, st), decor: [], scheme: 0, seed: J.h(project.seed, 999, 1) }));
+    plan.cuts.push(makeCut({ text: title, note: artist, lineText: title, line: -1, start: 0.1, end: firstStart - 0.04, layout: 'title', enter: rng.pick(['blur', 'type', 'wipe', 'assemble']), exit: rng.pick(['blur', 'drift', 'wipe']), hold: 'still', params: J.LAYOUTS.title.plan(rng, {}, st), decor: [], scheme: 0, styleKey: project.style, seed: J.h(project.seed, 999, 1) }));
   }
 
   parsed.lines.forEach((ln, li) => {
     const s = tm.starts[li], e = tm.ends[li];
     const ov = (project.overrides || {})[li] || {};
+    const lineStyleKey = ov.style && J.STYLES[ov.style] ? ov.style : project.style;
+    const lineSt = J.resolveLineStyle ? J.resolveLineStyle(project, lineStyleKey) : st;
+    plan.styles[lineStyleKey] = lineSt;
+    const nSchemes = lineSt.schemes.length;
     const lineSeed = ov.lock && ov.lockedSeed != null ? ov.lockedSeed : J.h(project.seed, li + 1, ov.seed | 0);
     const rng = J.rng(lineSeed);
     // Random-choice history/state is intentionally scoped to this lyric line.
@@ -3097,7 +3143,7 @@ J.plan = (project, audio) => {
     const n = [...ln.text.replace(/\s+/g, '')].length;
     const visEnd = Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
     const D = visEnd - s;
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed });
+    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
@@ -3121,17 +3167,17 @@ J.plan = (project, audio) => {
     if (nSchemes > 1 && li > 0 && rng.chance(fx.bgSwitch * (ln.impact ? 1.8 : 1))) schemeIdx = (schemeIdx + 1 + rng.int(0, nSchemes - 2)) % nSchemes;
     const emphLine = ln.impact || ln.emph.length > 0;
     // background graphic: chosen per line, occasionally re-rolled per cut
-    let lineBg = ov.bg && J.BG[ov.bg] ? ov.bg : pickBg(rng, st, en, fx, bgHistory);
+    let lineBg = ov.bg && J.BG[ov.bg] ? ov.bg : pickBg(rng, lineSt, en, fx, bgHistory);
     bgHistory.push(lineBg);
-    let lineBgP = J.BG[lineBg] && J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, st) : {};
+    let lineBgP = J.BG[lineBg] && J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, lineSt) : {};
     units.forEach((u, k) => {
       const cs = bounds[k], ce = bounds[k + 1], dur = ce - cs;
       const txt = u.text;
       const nn = [...txt.replace(/\s+/g, '')].length;
       const emph = ln.impact && (k === 0 || u.recap) || ln.emph.some(w => txt.includes(w));
-      const layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, st, en, nn, dur, history, emph, u.recap, H > W);
-      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, st, en, layout, dur, history, emph, nn);
-      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, st, en, layout, dur, k === units.length - 1, history);
+      const layout = ov.layout && J.LAYOUTS[ov.layout] ? ov.layout : pickLayout(rng, lineSt, en, nn, dur, history, emph, u.recap, H > W);
+      let enter = ov.enter && J.ENTER[ov.enter] ? ov.enter : pickEnter(rng, lineSt, en, layout, dur, history, emph, nn);
+      let exit = ov.exit && J.EXIT[ov.exit] ? ov.exit : pickExit(rng, lineSt, en, layout, dur, k === units.length - 1, history);
       const hold = ov.hold && J.HOLD[ov.hold] ? ov.hold : pickHold(rng, en, fx, history);
       let inDur = J.clamp(dur * 0.36, 0.12, 0.6);
       if (enter === 'type') inDur = J.clamp(nn * 0.055 + 0.1, 0.15, dur * 0.65);
@@ -3145,24 +3191,24 @@ J.plan = (project, audio) => {
       let sch = schemeIdx;
       if (nSchemes > 1 && k > 0 && rng.chance(0.12 * fx.bgSwitch)) sch = (schemeIdx + 1) % nSchemes;
       const LD = J.LAYOUTS[layout];
-      const params = LD.plan(rng, { text: txt, n: nn, W, H, dur }, st);
-      const decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, st, en, fx, layout, history);
-      const treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, st, en, fx, LD, emph, history);
-      const treatP = J.TREAT[treat].plan ? J.TREAT[treat].plan(rng, st) : {};
-      if (!ov.bg && k > 0 && rng.chance(0.18 * fx.bgSwitch + 0.04)) { lineBg = pickBg(rng, st, en, fx, bgHistory); lineBgP = J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, st) : {}; }
+      const params = LD.plan(rng, { text: txt, n: nn, W, H, dur }, lineSt);
+      const decor = Array.isArray(ov.decor) ? ov.decor.filter(id => J.DECOR[id]).map(id => decorParams(rng, id)) : pickDecor(rng, lineSt, en, fx, layout, history);
+      const treat = ov.treat && J.TREAT[ov.treat] ? ov.treat : pickTreat(rng, lineSt, en, fx, LD, emph, history);
+      const treatP = J.TREAT[treat].plan ? J.TREAT[treat].plan(rng, lineSt) : {};
+      if (!ov.bg && k > 0 && rng.chance(0.18 * fx.bgSwitch + 0.04)) { lineBg = pickBg(rng, lineSt, en, fx, bgHistory); lineBgP = J.BG[lineBg].plan ? J.BG[lineBg].plan(rng, lineSt) : {}; }
       const bg = LD.busy && !(J.BG[lineBg] && J.BG[lineBg].subtle) ? 'none' : lineBg;
-      const cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, st, en, fx, LD, emph, history);
-      const camP = J.CAMERA[cam].plan ? J.CAMERA[cam].plan(rng, st) : {};
+      const cam = ov.cam && J.CAMERA[ov.cam] ? ov.cam : pickCam(rng, lineSt, en, fx, LD, emph, history);
+      const camP = J.CAMERA[cam].plan ? J.CAMERA[cam].plan(rng, lineSt) : {};
       // cut-to-cut transition (replaces the previous cut's exit and this cut's entrance)
       const prevCut = plan.cuts[plan.cuts.length - 1];
       let trans = null, transP = {}, transDur = 0;
       const canTrans = prevCut && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5;
       if (canTrans) {
-        trans = ov.trans && J.TRANS[ov.trans] ? ov.trans : pickTrans(rng, st, en, fx, emph, history);
+        trans = ov.trans && J.TRANS[ov.trans] ? ov.trans : pickTrans(rng, lineSt, en, fx, emph, history);
         if (trans) {
           const TD = J.TRANS[trans];
           transDur = J.clamp(TD.dur || 0.35, 0.12, Math.min(0.6, dur * 0.45));
-          transP = TD.plan ? TD.plan(rng, st) : {};
+          transP = TD.plan ? TD.plan(rng, lineSt) : {};
           enter = 'cut'; inDur = 0.12;
           // Inside one lyric line, the transition replaces both adjacent cut animations.
           // Across lyric lines, do not rewrite the previous line: the renderer samples its
@@ -3170,13 +3216,13 @@ J.plan = (project, audio) => {
           if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
-      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
+      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: bg === lineBg ? lineBgP : {}, cam, camP, trans, transP, transDur });
       plan.cuts.push(cut);
       history.push({ layout, enter, exit, hold, treat, cam, trans, decor: decor.map(d => d.id) });
       // events at cut start
       // events at cut start — durations are on a 24fps timebase so every output rate looks the same
-      const g = fx.glitch * (st.glitchBoost || 1);
+      const g = fx.glitch * (lineSt.glitchBoost || 1);
       const fxOn = k2 => en.fx == null || en.fx[k2] !== false;
       const F = 1 / 24;
       if (fxOn('chroma')) addEvent(cs, 'chroma', 1.4 + rng.range(0, 2) * fx.chroma + (emph ? 2.5 : 0), 0.25);
@@ -3190,16 +3236,16 @@ J.plan = (project, audio) => {
       if (fxOn('slice') && dur > 0.8 && rng.chance(g * 0.4)) addEvent(cs + rng.range(0.35, 0.8) * dur, 'slice', 0.4 + g * 0.4, 2 * F);
       // the newer effect library: at most one per cut boundary (plus rare mid-cut accents)
       if (plan.cuts.length > 1 || k > 0 || li > 0) {
-        const pick = pickFx(rng, st, en, fx, emph, fxHistory, 'edge');
+        const pick = pickFx(rng, lineSt, en, fx, emph, fxHistory, 'edge');
         if (pick) { const D2 = J.FXE[pick]; const d = (D2.dur || 4) * F; addEvent(cs - (D2.pre ? D2.pre * F : 0), pick, (D2.amp || 1) * (0.7 + 0.5 * g + (emph ? 0.3 : 0)), d); fxHistory.push(pick); }
       }
-      if (dur > 1.1) { const pick = pickFx(rng, st, en, fx, emph, fxHistory, 'mid'); if (pick) { const D2 = J.FXE[pick]; addEvent(cs + rng.range(0.4, 0.75) * dur, pick, (D2.amp || 1) * (0.5 + 0.4 * g), (D2.dur || 3) * F); } }
+      if (dur > 1.1) { const pick = pickFx(rng, lineSt, en, fx, emph, fxHistory, 'mid'); if (pick) { const D2 = J.FXE[pick]; addEvent(cs + rng.range(0.4, 0.75) * dur, pick, (D2.amp || 1) * (0.5 + 0.4 * g), (D2.dur || 3) * F); } }
     });
     // interlude in long gaps
     const nextStart = li < parsed.lines.length - 1 ? tm.starts[li + 1] : null;
     if (nextStart != null && nextStart - visEnd > 1.3) {
       const r2 = J.rng(J.h(lineSeed, 404));
-      plan.cuts.push(makeCut({ text: title || '', lineText: '', line: li, start: visEnd, end: nextStart, layout: 'interlude', enter: 'blur', exit: 'blur', hold: 'still', inDur: 0.3, outDur: 0.3, params: J.LAYOUTS.interlude.plan(r2), decor: pickDecor(r2, st, en, Object.assign({}, fx, { decor: 1 }), 'interlude'), scheme: schemeIdx, seed: J.h(lineSeed, 405) }));
+      plan.cuts.push(makeCut({ text: title || '', lineText: '', line: li, start: visEnd, end: nextStart, layout: 'interlude', enter: 'blur', exit: 'blur', hold: 'still', inDur: 0.3, outDur: 0.3, params: J.LAYOUTS.interlude.plan(r2), decor: pickDecor(r2, lineSt, en, Object.assign({}, fx, { decor: 1 }), 'interlude'), scheme: schemeIdx, styleKey: lineStyleKey, seed: J.h(lineSeed, 405) }));
     }
   });
   plan.cuts.sort((a, b) => a.start - b.start);
@@ -3531,12 +3577,14 @@ class Renderer {
   frame(ctx, plan, t, opt = {}) {
     const W = plan.W, H = plan.H, scale = opt.scale || 1;
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
-    const fx = plan.fx, st = plan.style, fps = plan.fps;
+    const fx = plan.fx, fps = plan.fps;
+    const styleFor = cut => (cut && plan.styles && cut.styleKey && plan.styles[cut.styleKey]) || plan.style;
     // motion is quantised to 'koma' drawings per second (24fps timebase); random flicker runs on a <=24Hz clock
     const stepDur = J.stepDur(fx, fps);
     const clock = J.komaOf(fx) > 0 ? stepDur : 1 / 24;
     const tq = Math.floor(t / stepDur + 1e-6) * stepDur;
     const mainCut = J.cutAt(plan, tq);
+    const st = styleFor(mainCut);
     const sc = st.schemes[mainCut ? mainCut.scheme % st.schemes.length : 0] || st.schemes[0];
     const allowFilter = this.filterOK && !opt.fast;
     ctx.save();
@@ -3582,7 +3630,7 @@ class Renderer {
     const energy = plan.energy ? plan.energy[Math.min(plan.energy.length - 1, Math.max(0, Math.floor(t * plan.energyRate)))] : null;
     // ---------- background graphic (per line) ----------
     if (!opt.transparent && !key && mainCut && mainCut.bg && mainCut.bg !== 'none' && J.BG[mainCut.bg]) {
-      const env = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo, bgOnly: true });
+      const env = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo, bgOnly: true });
       ctx.save();
       try { J.BG[mainCut.bg].draw(env, mainCut.bgP || {}); } catch (e) { console.warn('bg', mainCut.bg, e); }
       ctx.restore();
@@ -3602,7 +3650,7 @@ class Renderer {
     let layerBlur = 0, LX = null;
     if (allowFilter && mainCut && J.CAMERA[mainCut.cam] && mainCut.cam !== 'push') {
       try {
-        const e0 = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo });
+        const e0 = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo });
         const c0 = J.CAMERA[mainCut.cam].get(e0, mainCut.camP || {});
         if (c0 && c0.blur > 0.4) layerBlur = c0.blur;
       } catch (e) {}
@@ -3617,10 +3665,12 @@ class Renderer {
       const tp = Math.max(0, tq - P.lag);
       const cut = P.lag ? J.cutAt(plan, tp) : mainCut;
       if (!cut) continue;
-      const csc = st.schemes[cut.scheme % st.schemes.length] || st.schemes[0];
+      const cst = styleFor(cut);
+      const csc = cst.schemes[cut.scheme % cst.schemes.length] || cst.schemes[0];
       const lt = tp - cut.start;
       const X = LX || ctx;
       const env = this.makeEnv(X, plan, cut, csc, {
+        st: cst,
         pass: P.pass, passColor: P.pass === 'A' ? csc.ghostA : P.pass === 'B' ? csc.ghostB : null,
         t: tp, lt, ltb: lt + P.lag, step: Math.floor(tp / clock + 1e-6), scale, allowFilter, energy, beat: beatInfo,
       });
@@ -3655,7 +3705,8 @@ class Renderer {
         // Sample its final resting frame just before its own exit animation begins.
         const prevRestT = prev.outDur > 0 ? Math.max(prev.start, prev.end - prev.outDur - 1e-3) : Math.max(prev.start, prev.end - 1e-3);
         this.frame(A.getContext('2d'), plan, prevRestT, Object.assign({}, opt, { noTrans: true, noPost: true, noHud: true }));
-        const psc = st.schemes[prev.scheme % st.schemes.length] || st.schemes[0];
+        const pst = styleFor(prev);
+        const psc = pst.schemes[prev.scheme % pst.schemes.length] || pst.schemes[0];
         ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
         try { J.TRANS[mainCut.trans].draw(ctx, A, B, J.clamp(lt / dur), { cw, ch, sc, scPrev: psc, st, P: mainCut.transP || {}, step, t, scale, allowFilter, seed: mainCut.seed | 0, tmp: (w, h) => this.ensure(this.transC || (this.transC = mk(2, 2)), w, h) }); }
         catch (e) { console.warn('trans', mainCut.trans, e); }
@@ -3663,13 +3714,14 @@ class Renderer {
       }
     }
     // ---------- HUD ----------
-    if (plan.hud && !opt.noHud) {
-      const env = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: 0, ltb: 0, step, scale, allowFilter, energy, beat: beatInfo });
+    const hudOn = fx.hud === 'on' ? true : fx.hud === 'off' ? false : !!st.hud;
+    if (hudOn && !opt.noHud) {
+      const env = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: 0, ltb: 0, step, scale, allowFilter, energy, beat: beatInfo });
       J.drawHUD(env, plan);
     }
     ctx.restore();
     // ---------- post ----------
-    if (!opt.noPost) this.post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter);
+    if (!opt.noPost) this.post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter, st);
     if (key && !opt.noPost) this.keyFinish(ctx, key, opt);
   }
 
@@ -3776,9 +3828,9 @@ class Renderer {
     return bb;
   }
 
-  post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter) {
+  post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter, activeStyle) {
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
-    const fx = plan.fx, st = plan.style;
+    const fx = plan.fx, st = activeStyle || plan.style;
     const active = plan.events.filter(ev => t >= ev.t && t < ev.t + Math.max(ev.dur, 1 / plan.fps));
     const needScratch = active.some(ev => ['slice', 'block', 'zoom', 'mosaic'].includes(ev.type) || (J.FXE[ev.type] && J.FXE[ev.type].scratch)) || (!opt.fast && (st.glow || 0) > 0);
     const S = needScratch ? this.ensure(this.scratch, cw, ch) : null;
@@ -3792,7 +3844,7 @@ class Renderer {
       if (D && D.draw) {
         if (D.scratch) copy();
         try {
-          D.draw(ctx, ev, k, { cw, ch, S, sc, st: plan.style, step: st2, t, scale, renderer: this, allowFilter, opt, tmp: (w, h) => this.ensure(this.tiny, w, h), tmp2: (w, h) => this.ensure(this.small2 || (this.small2 = mk(2, 2)), w, h) });
+          D.draw(ctx, ev, k, { cw, ch, S, sc, st, step: st2, t, scale, renderer: this, allowFilter, opt, tmp: (w, h) => this.ensure(this.tiny, w, h), tmp2: (w, h) => this.ensure(this.small2 || (this.small2 = mk(2, 2)), w, h) });
         } catch (e) { console.warn('fx', ev.type, e); }
         ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none'; ctx.imageSmoothingEnabled = true;
         continue;
@@ -28711,16 +28763,25 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0 };
+const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
-  ctx: null, src: null, startAt: 0,
-  play(buffer, offset) {
+  ctx: null, src: null, gain: null, startAt: 0, volume: 1,
+  ensure() {
     if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!this.gain) { this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination); }
+    this.gain.gain.value = this.volume;
+  },
+  setVolume(v) {
+    this.volume = J.clamp(+v || 0, 0, 2);
+    if (this.gain && this.ctx) this.gain.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+  },
+  play(buffer, offset) {
+    this.ensure();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     this.stop();
-    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.ctx.destination);
+    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.gain);
     const off = Math.max(0, Math.min(offset, buffer.duration - 0.01));
     s.start(0, off); this.src = s; this.startAt = this.ctx.currentTime - off;
   },
@@ -28738,6 +28799,7 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
   o.userFonts = (p && p.userFonts) || [];
@@ -28753,6 +28815,43 @@ function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave,
 function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
 
+/* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
+   Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
+function lineIndexMap(oldRaw, newRaw) {
+  const A = J.parseLyrics(oldRaw).lines.map(x => x.text);
+  const B = J.parseLyrics(newRaw).lines.map(x => x.text);
+  const m = A.length, n = B.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const pairs = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (A[i] === B[j]) { pairs.push([i, j]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  const bounds = [[-1, -1], ...pairs, [m, n]];
+  const map = {};
+  for (const [oi, nj] of pairs) map[nj] = oi;
+  for (let k = 0; k < bounds.length - 1; k++) {
+    const [oa, na] = bounds[k], [ob, nb] = bounds[k + 1];
+    const oc = ob - oa - 1, nc = nb - na - 1;
+    if (oc === nc) for (let q = 1; q <= oc; q++) map[na + q] = oa + q;
+  }
+  return { map, oldCount: m, newCount: n };
+}
+function remapLineIndexedState(oldRaw, newRaw) {
+  if (oldRaw === newRaw) return;
+  const { map } = lineIndexMap(oldRaw, newRaw);
+  const remap = src => {
+    const out = {};
+    for (const [nj, oi] of Object.entries(map)) if (src && src[oi] != null) out[nj] = src[oi];
+    return out;
+  };
+  S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  S.project.overrides = remap(S.project.overrides || {});
+}
+
 /* ---------------- planning ---------------- */
 function audioLike() {
   const T = S.project.timing;
@@ -28765,6 +28864,7 @@ function audioLike() {
   return null;
 }
 function replan() {
+  S.layoutPreview = null;
   S.plan = J.plan(S.project, audioLike());
   if (S.t > S.plan.duration) S.t = 0;
   renderLines(); sizeViewport(); drawTimeline(); updateTimeUI();
@@ -28830,11 +28930,13 @@ function sizeViewport() {
 }
 function draw() {
   const c = $('view'), ctx = c.getContext('2d');
+  const pv = S.layoutPreview;
+  const plan = pv ? pv.plan : S.plan, t = pv ? pv.t : S.t;
   const t0 = performance.now();
-  S.renderer.frame(ctx, S.plan, S.t, { scale: c.width / S.plan.W, fast: S.playing && S.slow });
+  S.renderer.frame(ctx, plan, t, { scale: c.width / plan.W, fast: S.playing && S.slow });
   const dt = performance.now() - t0;
   S.slow = S.playing ? (dt > 30 ? true : dt < 14 ? false : S.slow) : false;
-  updateTimeUI(); drawTimeline(); updateCutInfo();
+  if (!pv) { updateTimeUI(); drawTimeline(); updateCutInfo(); }
 }
 function tick(now) {
   requestAnimationFrame(tick);
@@ -28989,21 +29091,25 @@ function updateCutInfo() {
 function renderLines() {
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
-  const layoutOpts = '<option value="">自動</option>' + J.LAYOUT_ORDER.map(k => `<option value="${k}">${J.LAYOUTS[k].name}</option>`).join('');
+  const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
+  const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
   S.plan.lines.forEach((ln, i) => {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln';
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
+    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="txt" title="${escapeHtml(ln.text)}">${escapeHtml(ln.text)}</span>
       <div class="meta"><span class="cuts"></span>
       <span class="tools">
-        <select aria-label="レイアウト指定">${layoutOpts}</select>
+        <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
+        <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
         <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
         <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       </span></div>`;
-    li.querySelector('select').value = o.layout || '';
+    const styleSel = li.querySelector('.line-style');
+    styleSel.value = o.style || '';
     li.querySelector('.time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -29011,7 +29117,8 @@ function renderLines() {
       replan();
     });
     li.querySelector('.txt').addEventListener('click', () => seek(ln.start + 0.001));
-    li.querySelector('select').addEventListener('change', e => { setOv(i, { layout: e.target.value || undefined }); replan(); });
+    styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => { const cur = ov[i] || {}; setOv(i, { seed: (cur.seed | 0) + 1, lock: false }); replan(); seek(ln.start + 0.001); });
     li.querySelector('.lock').addEventListener('click', () => {
       const cur = ov[i] || {};
@@ -29035,6 +29142,79 @@ function setOv(i, patch) {
   for (const k of Object.keys(cur)) if (cur[k] === undefined || cur[k] === false || cur[k] === '') delete cur[k];
   if (Object.keys(cur).length) S.project.overrides[i] = cur; else delete S.project.overrides[i];
 }
+
+let layoutPreviewTimer = 0;
+function clearLayoutPreview() {
+  clearTimeout(layoutPreviewTimer);
+  if (S.layoutPreview) { S.layoutPreview = null; S.need = true; }
+}
+function previewLineLayout(i, layoutKey) {
+  const p = JSON.parse(JSON.stringify(S.project));
+  p.overrides = p.overrides || {};
+  const cur = Object.assign({}, p.overrides[i] || {});
+  if (layoutKey) cur.layout = layoutKey; else delete cur.layout;
+  if (Object.keys(cur).length) p.overrides[i] = cur; else delete p.overrides[i];
+  const plan = J.plan(p, audioLike());
+  const cut = plan.cuts.find(c => c.line === i && c.layout !== 'interlude');
+  const line = plan.lines[i];
+  const t = cut ? cut.start + Math.min(cut.dur * 0.55, Math.max(cut.inDur + 0.06, cut.dur * 0.28)) : (line ? line.start + 0.01 : S.t);
+  S.layoutPreview = { plan, t };
+  S.need = true;
+}
+function queueLayoutPreview(i, layoutKey) {
+  clearTimeout(layoutPreviewTimer);
+  layoutPreviewTimer = setTimeout(() => previewLineLayout(i, layoutKey), 35);
+}
+function closeLayoutMenu() {
+  const m = S.layoutMenu;
+  if (m) {
+    document.removeEventListener('pointerdown', m.outside, true);
+    if (m.el && m.el.parentNode) m.el.remove();
+    S.layoutMenu = null;
+  }
+  clearLayoutPreview();
+}
+function openLayoutMenu(trigger, lineIndex, currentLayout) {
+  closeLayoutMenu();
+  const menu = document.createElement('div');
+  menu.className = 'layout-menu';
+  menu.setAttribute('role', 'menu');
+  const add = (key, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.k = key;
+    if ((currentLayout || '') === key) b.classList.add('selected');
+    b.addEventListener('mouseenter', () => {
+      menu.querySelectorAll('.previewing').forEach(x => x.classList.remove('previewing'));
+      b.classList.add('previewing');
+      queueLayoutPreview(lineIndex, key);
+    });
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      setOv(lineIndex, { layout: key || undefined });
+      closeLayoutMenu();
+      replan();
+      const ln = S.plan.lines[lineIndex];
+      if (ln) seek(ln.start + 0.001);
+    });
+    menu.appendChild(b);
+  };
+  add('', '自動');
+  for (const k of J.LAYOUT_ORDER) {
+    const d = J.LAYOUTS[k];
+    if (d && !d.special) add(k, d.name);
+  }
+  menu.addEventListener('mouseleave', clearLayoutPreview);
+  document.body.appendChild(menu);
+  const r = trigger.getBoundingClientRect();
+  let left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - menu.offsetWidth - 8));
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) closeLayoutMenu(); };
+  document.addEventListener('pointerdown', outside, true);
+  S.layoutMenu = { el: menu, outside };
+}
+
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 /* ---------------- style tab ---------------- */
@@ -29372,6 +29552,10 @@ function syncUI() {
   $('offset').value = S.project.timing.offset ?? 0.4;
   $('lineScale').value = S.project.timing.lineScale ?? 1;
   $('snap').checked = !!S.project.timing.snap;
+  const pv = Math.round(J.clamp(S.project.previewVolume ?? 1, 0, 2) * 100);
+  $('previewVolume').value = String(pv);
+  $('previewVolumeValue').textContent = pv + '%';
+  AP.setVolume(pv / 100);
   document.querySelectorAll('.wa-toggle').forEach(el => { el.checked = S.project.wa !== false; });
   document.querySelectorAll('.extra-toggle').forEach(el => { el.checked = S.project.extra === true; });
   renderFontRoles(); renderColors(); renderFx(); renderTech(); syncOut(); drawStyleGrid();
@@ -29379,7 +29563,12 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
-  $('lyrics').addEventListener('input', e => { S.project.lyrics = e.target.value; replanSoon(260); });
+  $('lyrics').addEventListener('input', e => {
+    const next = e.target.value, prev = S.project.lyrics;
+    remapLineIndexedState(prev, next);
+    S.project.lyrics = next;
+    replanSoon(260);
+  });
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
@@ -29389,6 +29578,13 @@ function bind() {
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
+  $('previewVolume').addEventListener('input', e => {
+    const pct = J.clamp(+e.target.value || 0, 0, 200);
+    S.project.previewVolume = pct / 100;
+    $('previewVolumeValue').textContent = Math.round(pct) + '%';
+    AP.setVolume(S.project.previewVolume);
+    autosave();
+  });
   $('btnTap').addEventListener('click', () => (S.tap ? stopTap() : startTap()));
   $('tapBtn').addEventListener('click', tapNow);
   $('tapStop').addEventListener('click', () => { pause(); stopTap(); });
@@ -29498,7 +29694,8 @@ function bind() {
     else if (e.code === 'ArrowLeft') seek(S.t - (e.shiftKey ? 1 : 1 / S.plan.fps));
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
-  window.addEventListener('resize', () => { sizeViewport(); drawTimeline(); });
+  $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
+  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
 }
 
