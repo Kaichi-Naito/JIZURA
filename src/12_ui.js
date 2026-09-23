@@ -12,16 +12,25 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0 };
+const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
-  ctx: null, src: null, startAt: 0,
-  play(buffer, offset) {
+  ctx: null, src: null, gain: null, startAt: 0, volume: 1,
+  ensure() {
     if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!this.gain) { this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination); }
+    this.gain.gain.value = this.volume;
+  },
+  setVolume(v) {
+    this.volume = J.clamp(+v || 0, 0, 2);
+    if (this.gain && this.ctx) this.gain.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+  },
+  play(buffer, offset) {
+    this.ensure();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     this.stop();
-    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.ctx.destination);
+    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.gain);
     const off = Math.max(0, Math.min(offset, buffer.duration - 0.01));
     s.start(0, off); this.src = s; this.startAt = this.ctx.currentTime - off;
   },
@@ -39,6 +48,7 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
   o.userFonts = (p && p.userFonts) || [];
@@ -54,6 +64,43 @@ function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave,
 function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
 
+/* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
+   Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
+function lineIndexMap(oldRaw, newRaw) {
+  const A = J.parseLyrics(oldRaw).lines.map(x => x.text);
+  const B = J.parseLyrics(newRaw).lines.map(x => x.text);
+  const m = A.length, n = B.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const pairs = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (A[i] === B[j]) { pairs.push([i, j]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  const bounds = [[-1, -1], ...pairs, [m, n]];
+  const map = {};
+  for (const [oi, nj] of pairs) map[nj] = oi;
+  for (let k = 0; k < bounds.length - 1; k++) {
+    const [oa, na] = bounds[k], [ob, nb] = bounds[k + 1];
+    const oc = ob - oa - 1, nc = nb - na - 1;
+    if (oc === nc) for (let q = 1; q <= oc; q++) map[na + q] = oa + q;
+  }
+  return { map, oldCount: m, newCount: n };
+}
+function remapLineIndexedState(oldRaw, newRaw) {
+  if (oldRaw === newRaw) return;
+  const { map } = lineIndexMap(oldRaw, newRaw);
+  const remap = src => {
+    const out = {};
+    for (const [nj, oi] of Object.entries(map)) if (src && src[oi] != null) out[nj] = src[oi];
+    return out;
+  };
+  S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  S.project.overrides = remap(S.project.overrides || {});
+}
+
 /* ---------------- planning ---------------- */
 function audioLike() {
   const T = S.project.timing;
@@ -66,6 +113,7 @@ function audioLike() {
   return null;
 }
 function replan() {
+  S.layoutPreview = null;
   S.plan = J.plan(S.project, audioLike());
   if (S.t > S.plan.duration) S.t = 0;
   renderLines(); sizeViewport(); drawTimeline(); updateTimeUI();
@@ -131,11 +179,13 @@ function sizeViewport() {
 }
 function draw() {
   const c = $('view'), ctx = c.getContext('2d');
+  const pv = S.layoutPreview;
+  const plan = pv ? pv.plan : S.plan, t = pv ? pv.t : S.t;
   const t0 = performance.now();
-  S.renderer.frame(ctx, S.plan, S.t, { scale: c.width / S.plan.W, fast: S.playing && S.slow });
+  S.renderer.frame(ctx, plan, t, { scale: c.width / plan.W, fast: S.playing && S.slow });
   const dt = performance.now() - t0;
   S.slow = S.playing ? (dt > 30 ? true : dt < 14 ? false : S.slow) : false;
-  updateTimeUI(); drawTimeline(); updateCutInfo();
+  if (!pv) { updateTimeUI(); drawTimeline(); updateCutInfo(); }
 }
 function tick(now) {
   requestAnimationFrame(tick);
@@ -290,21 +340,25 @@ function updateCutInfo() {
 function renderLines() {
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
-  const layoutOpts = '<option value="">自動</option>' + J.LAYOUT_ORDER.map(k => `<option value="${k}">${J.LAYOUTS[k].name}</option>`).join('');
+  const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
+  const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
   S.plan.lines.forEach((ln, i) => {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln';
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
+    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="txt" title="${escapeHtml(ln.text)}">${escapeHtml(ln.text)}</span>
       <div class="meta"><span class="cuts"></span>
       <span class="tools">
-        <select aria-label="レイアウト指定">${layoutOpts}</select>
+        <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
+        <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
         <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
         <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       </span></div>`;
-    li.querySelector('select').value = o.layout || '';
+    const styleSel = li.querySelector('.line-style');
+    styleSel.value = o.style || '';
     li.querySelector('.time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -312,7 +366,8 @@ function renderLines() {
       replan();
     });
     li.querySelector('.txt').addEventListener('click', () => seek(ln.start + 0.001));
-    li.querySelector('select').addEventListener('change', e => { setOv(i, { layout: e.target.value || undefined }); replan(); });
+    styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => { const cur = ov[i] || {}; setOv(i, { seed: (cur.seed | 0) + 1, lock: false }); replan(); seek(ln.start + 0.001); });
     li.querySelector('.lock').addEventListener('click', () => {
       const cur = ov[i] || {};
@@ -336,6 +391,79 @@ function setOv(i, patch) {
   for (const k of Object.keys(cur)) if (cur[k] === undefined || cur[k] === false || cur[k] === '') delete cur[k];
   if (Object.keys(cur).length) S.project.overrides[i] = cur; else delete S.project.overrides[i];
 }
+
+let layoutPreviewTimer = 0;
+function clearLayoutPreview() {
+  clearTimeout(layoutPreviewTimer);
+  if (S.layoutPreview) { S.layoutPreview = null; S.need = true; }
+}
+function previewLineLayout(i, layoutKey) {
+  const p = JSON.parse(JSON.stringify(S.project));
+  p.overrides = p.overrides || {};
+  const cur = Object.assign({}, p.overrides[i] || {});
+  if (layoutKey) cur.layout = layoutKey; else delete cur.layout;
+  if (Object.keys(cur).length) p.overrides[i] = cur; else delete p.overrides[i];
+  const plan = J.plan(p, audioLike());
+  const cut = plan.cuts.find(c => c.line === i && c.layout !== 'interlude');
+  const line = plan.lines[i];
+  const t = cut ? cut.start + Math.min(cut.dur * 0.55, Math.max(cut.inDur + 0.06, cut.dur * 0.28)) : (line ? line.start + 0.01 : S.t);
+  S.layoutPreview = { plan, t };
+  S.need = true;
+}
+function queueLayoutPreview(i, layoutKey) {
+  clearTimeout(layoutPreviewTimer);
+  layoutPreviewTimer = setTimeout(() => previewLineLayout(i, layoutKey), 35);
+}
+function closeLayoutMenu() {
+  const m = S.layoutMenu;
+  if (m) {
+    document.removeEventListener('pointerdown', m.outside, true);
+    if (m.el && m.el.parentNode) m.el.remove();
+    S.layoutMenu = null;
+  }
+  clearLayoutPreview();
+}
+function openLayoutMenu(trigger, lineIndex, currentLayout) {
+  closeLayoutMenu();
+  const menu = document.createElement('div');
+  menu.className = 'layout-menu';
+  menu.setAttribute('role', 'menu');
+  const add = (key, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.k = key;
+    if ((currentLayout || '') === key) b.classList.add('selected');
+    b.addEventListener('mouseenter', () => {
+      menu.querySelectorAll('.previewing').forEach(x => x.classList.remove('previewing'));
+      b.classList.add('previewing');
+      queueLayoutPreview(lineIndex, key);
+    });
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      setOv(lineIndex, { layout: key || undefined });
+      closeLayoutMenu();
+      replan();
+      const ln = S.plan.lines[lineIndex];
+      if (ln) seek(ln.start + 0.001);
+    });
+    menu.appendChild(b);
+  };
+  add('', '自動');
+  for (const k of J.LAYOUT_ORDER) {
+    const d = J.LAYOUTS[k];
+    if (d && !d.special) add(k, d.name);
+  }
+  menu.addEventListener('mouseleave', clearLayoutPreview);
+  document.body.appendChild(menu);
+  const r = trigger.getBoundingClientRect();
+  let left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - menu.offsetWidth - 8));
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) closeLayoutMenu(); };
+  document.addEventListener('pointerdown', outside, true);
+  S.layoutMenu = { el: menu, outside };
+}
+
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 /* ---------------- style tab ---------------- */
@@ -673,6 +801,10 @@ function syncUI() {
   $('offset').value = S.project.timing.offset ?? 0.4;
   $('lineScale').value = S.project.timing.lineScale ?? 1;
   $('snap').checked = !!S.project.timing.snap;
+  const pv = Math.round(J.clamp(S.project.previewVolume ?? 1, 0, 2) * 100);
+  $('previewVolume').value = String(pv);
+  $('previewVolumeValue').textContent = pv + '%';
+  AP.setVolume(pv / 100);
   document.querySelectorAll('.wa-toggle').forEach(el => { el.checked = S.project.wa !== false; });
   document.querySelectorAll('.extra-toggle').forEach(el => { el.checked = S.project.extra === true; });
   renderFontRoles(); renderColors(); renderFx(); renderTech(); syncOut(); drawStyleGrid();
@@ -680,7 +812,12 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
-  $('lyrics').addEventListener('input', e => { S.project.lyrics = e.target.value; replanSoon(260); });
+  $('lyrics').addEventListener('input', e => {
+    const next = e.target.value, prev = S.project.lyrics;
+    remapLineIndexedState(prev, next);
+    S.project.lyrics = next;
+    replanSoon(260);
+  });
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
@@ -690,6 +827,13 @@ function bind() {
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
+  $('previewVolume').addEventListener('input', e => {
+    const pct = J.clamp(+e.target.value || 0, 0, 200);
+    S.project.previewVolume = pct / 100;
+    $('previewVolumeValue').textContent = Math.round(pct) + '%';
+    AP.setVolume(S.project.previewVolume);
+    autosave();
+  });
   $('btnTap').addEventListener('click', () => (S.tap ? stopTap() : startTap()));
   $('tapBtn').addEventListener('click', tapNow);
   $('tapStop').addEventListener('click', () => { pause(); stopTap(); });
@@ -799,7 +943,8 @@ function bind() {
     else if (e.code === 'ArrowLeft') seek(S.t - (e.shiftKey ? 1 : 1 / S.plan.fps));
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
-  window.addEventListener('resize', () => { sizeViewport(); drawTimeline(); });
+  $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
+  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
 }
 

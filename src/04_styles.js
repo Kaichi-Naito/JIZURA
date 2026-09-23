@@ -152,9 +152,7 @@ J.STYLES = {
 J.STYLE_ORDER = ['noir', 'crimson', 'caution', 'magenta', 'paper', 'hud', 'mint', 'specimen', 'transit', 'blueprint', 'rouge', 'mono'];
 
 /* resolve style + user colour/font overrides into an effective style */
-J.resolveStyle = (project) => {
-  const base = J.STYLES[project.style] || J.STYLES.noir;
-  const st = JSON.parse(JSON.stringify(base));
+function applyProjectColours(st, project) {
   const ov = project.colors || {};
   // base colours (background / text) replace the main scheme only
   if (ov.enabled) st.schemes[0] = Object.assign({}, st.schemes[0], pickDefined(ov, ['bg', 'fg', 'sub']));
@@ -163,17 +161,42 @@ J.resolveStyle = (project) => {
     st.schemes = st.schemes.map(s => {
       const o = Object.assign({}, s);
       if (ov.accent) { o.accent = J.fitContrast(ov.accent, s.bg, 2.4); if (s.ink === s.accent) o.ink = o.accent; }
-      // ghosts only need to stay visible against this scheme's background
       if (ov.ghostA) o.ghostA = J.fitContrast(ov.ghostA, s.bg, 1.35);
       if (ov.ghostB) o.ghostB = J.fitContrast(ov.ghostB, s.bg, 1.35);
       if (ov.accent && s.grad) o.grad = [J.fitContrast(ov.accent, s.bg, 2.4), J.mix(ov.accent, '#000000', 0.7)];
       return o;
     });
   }
+}
+function applyProjectFonts(st, project) {
   const fo = project.fonts || {};
   for (const role of ['display', 'serif', 'body']) if (fo[role] && J.FONTS[fo[role]]) st.fonts[role] = [fo[role]];
+}
+J.resolveStyle = (project) => {
+  const base = J.STYLES[project.style] || J.STYLES.noir;
+  const st = JSON.parse(JSON.stringify(base));
+  applyProjectColours(st, project);
+  applyProjectFonts(st, project);
   if (J.keyMode(project)) keyStyle(st);
   return st;
+};
+/* A per-line style changes typography / texture / tendencies, but colour stays project-global.
+   The global style (plus the project's explicit colour overrides) is therefore always the palette source. */
+J.resolveLineStyle = (project, styleKey) => {
+  if (!styleKey || styleKey === project.style || !J.STYLES[styleKey]) return J.resolveStyle(project);
+  const local = JSON.parse(JSON.stringify(J.STYLES[styleKey]));
+  const palette = J.resolveStyle(project);
+  local.schemes = palette.schemes.map(s => {
+    const o = JSON.parse(JSON.stringify(s));
+    if (local.useGrad && !o.grad) o.grad = [o.accent || o.fg, o.accent2 || o.fg];
+    return o;
+  });
+  applyProjectFonts(local, project);
+  if (J.keyMode(project)) {
+    local.texture = { grain: 0, paper: 0, scan: 0 };
+    local.key = true;
+  }
+  return local;
 };
 /* ---- 合成用の背景（グリーンバック / ブラックバック） ----
    Every scheme becomes white-on-black (so every part behaves as on a dark background), textures go away,
