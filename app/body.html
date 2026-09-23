@@ -43,6 +43,12 @@
           <label class="file" title="mp3 / wav / m4a など">曲を読み込む<input id="audioFile" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"></label>
           <button id="btnTap" title="曲を再生しながら各行の頭でタップ">タップで同期</button>
         </div>
+        <label class="preview-volume">
+          <span>プレビュー音量</span>
+          <input id="previewVolume" type="range" min="0" max="200" step="1" value="100" aria-label="プレビュー音量">
+          <output id="previewVolumeValue" class="mono">100%</output>
+          <small>書き出しは常に100%</small>
+        </label>
         <div class="fields pro-only">
           <label class="field">BPM<input id="bpm" type="number" min="0" max="300" step="0.1" placeholder="自動"></label>
           <label class="field">開始(秒)<input id="offset" type="number" min="0" step="0.05"></label>
@@ -138,7 +144,9 @@
       </nav>
 
       <div class="tabpane" data-pane="style">
+        <h3 style="margin-top:0">全体スタイル</h3>
         <div id="styleGrid" class="style-grid"></div>
+        <p class="note">ここはプロジェクト全体の基準です。各行のスタイルは左の「行とカット」で個別に指定できます。配色は全行共通です。</p>
         <h3>フォントの役割</h3>
         <div id="fontRoles"></div>
         <div class="row" style="margin-top:8px">
