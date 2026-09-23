@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -200,7 +200,14 @@ async function restoreEmbeddedAudio(asset) {
   }
 }
 async function projectPayloadForSave() {
-  storePlanSnapshot();
+  // Text inputs replan on a short debounce. If Save is clicked inside that window,
+  // force the pending plan update before freezing the project.
+  if (S.activePlanKey !== planInputKey(S.project)) {
+    clearTimeout(replanTimer);
+    replan();
+  } else {
+    storePlanSnapshot();
+  }
   const out = JSON.parse(JSON.stringify(S.project));
   let file = S.audioSource;
   if (!file && out.audio && out.audio.id) {
@@ -295,9 +302,11 @@ function plainPlan(plan) {
 }
 function storePlanSnapshot() {
   if (!S.project || !S.plan) return;
+  const inputKey = planInputKey(S.project);
+  S.activePlanKey = inputKey;
   S.project.planSnapshot = {
     version: PLAN_SNAPSHOT_VERSION,
-    inputKey: planInputKey(S.project),
+    inputKey,
     savedAt: Date.now(),
     plan: plainPlan(S.plan),
   };
@@ -322,6 +331,7 @@ function restorePlanSnapshot() {
   try {
     S.layoutPreview = null;
     S.plan = plainPlan(snap.plan);
+    S.activePlanKey = snap.inputKey;
     finishPlanUi(false);
     return true;
   } catch (e) {
@@ -344,6 +354,7 @@ function audioLike() {
 function replan() {
   S.layoutPreview = null;
   S.plan = J.plan(S.project, audioLike());
+  S.activePlanKey = planInputKey(S.project);
   finishPlanUi(true);
 }
 /* pre-decompose glyphs used by piece animations while the editor is idle, so playback does not hitch */
