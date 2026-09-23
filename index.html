@@ -121,8 +121,8 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .no { font: 500 11px var(--mono); color: var(--faint); text-align: right; }
 .ln .time { width: 100%; padding: 3px 5px; font-size: 12px; }
 .ln .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
-.ln .tools { display: flex; gap: 4px; flex: none; align-items: center; }
+.ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+.ln .tools { display: flex; gap: 4px; flex: none; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; max-width: 100%; }
 .ln .tools select, .ln .layout-trigger { padding: 2px 4px; font-size: 11px; max-width: 92px; min-width: 0; }
 .ln .line-style { width: 92px; }
 .ln .layout-trigger { width: 92px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
