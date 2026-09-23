@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -275,6 +275,17 @@ function remapLineIndexedState(oldRaw, newRaw) {
     return out;
   };
   S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  const oldToNew = {};
+  for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
+  const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
+  for (const [key, value] of Object.entries(oldBounds)) {
+    const m = key.match(/^(-?\d+):(\d+)>(-?\d+):(\d+)$/);
+    if (!m) continue;
+    const l = oldToNew[m[1]], r = oldToNew[m[3]];
+    if (l == null || r == null) continue;
+    newBounds[l + ':' + m[2] + '>' + r + ':' + m[4]] = value;
+  }
+  S.project.timing.cutBoundaries = newBounds;
   S.project.overrides = remap(S.project.overrides || {});
 }
 
@@ -299,6 +310,15 @@ function planInputKey(project) {
 }
 function plainPlan(plan) {
   return JSON.parse(JSON.stringify(plan, (k, v) => (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(v)) ? Array.from(v) : v));
+}
+function ensureLineCutOrdinals(plan) {
+  const counts = {};
+  for (const cut of (plan && plan.cuts) || []) {
+    if (!(cut.line >= 0) || cut.layout === 'interlude') continue;
+    const n = counts[cut.line] || 0;
+    if (!(cut.lineCut >= 0)) cut.lineCut = n;
+    counts[cut.line] = Math.max(n + 1, cut.lineCut + 1);
+  }
 }
 function storePlanSnapshot() {
   if (!S.project || !S.plan) return;
@@ -331,6 +351,7 @@ function restorePlanSnapshot() {
   try {
     S.layoutPreview = null;
     S.plan = plainPlan(snap.plan);
+    ensureLineCutOrdinals(S.plan);
     S.activePlanKey = snap.inputKey;
     finishPlanUi(false);
     return true;
