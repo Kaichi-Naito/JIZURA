@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -200,6 +200,14 @@ async function restoreEmbeddedAudio(asset) {
   }
 }
 async function projectPayloadForSave() {
+  // Text inputs replan on a short debounce. If Save is clicked inside that window,
+  // force the pending plan update before freezing the project.
+  if (S.activePlanKey !== planInputKey(S.project)) {
+    clearTimeout(replanTimer);
+    replan();
+  } else {
+    storePlanSnapshot();
+  }
   const out = JSON.parse(JSON.stringify(S.project));
   let file = S.audioSource;
   if (!file && out.audio && out.audio.id) {
@@ -226,7 +234,10 @@ async function applyProjectData(raw) {
   S.project = mergeProject(p);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
-  syncUI(); replan(); flushSave();
+  syncUI();
+  const frozen = restorePlanSnapshot();
+  if (!frozen) replan();
+  flushSave();
   return !!S.audio;
 }
 
@@ -267,6 +278,68 @@ function remapLineIndexedState(oldRaw, newRaw) {
   S.project.overrides = remap(S.project.overrides || {});
 }
 
+/* ---------------- frozen plan snapshot ----------------
+   Save the fully generated plan, not only its random seed. This makes a saved
+   project reopen with the same cuts even if future planner logic changes. */
+const PLAN_SNAPSHOT_VERSION = 1;
+function planInputKey(project) {
+  const src = {
+    title: project.title || '', artist: project.artist || '', lyrics: project.lyrics || '',
+    style: project.style || 'noir', mood: project.mood ?? null,
+    extra: project.extra === true, wa: project.wa !== false, keyBg: project.keyBg || 'off',
+    seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
+    fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
+    overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
+    userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
+  };
+  const s = JSON.stringify(src);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return 'p1-' + (h >>> 0).toString(16).padStart(8, '0') + '-' + s.length;
+}
+function plainPlan(plan) {
+  return JSON.parse(JSON.stringify(plan, (k, v) => (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(v)) ? Array.from(v) : v));
+}
+function storePlanSnapshot() {
+  if (!S.project || !S.plan) return;
+  const inputKey = planInputKey(S.project);
+  S.activePlanKey = inputKey;
+  S.project.planSnapshot = {
+    version: PLAN_SNAPSHOT_VERSION,
+    inputKey,
+    savedAt: Date.now(),
+    plan: plainPlan(S.plan),
+  };
+}
+function validPlanSnapshot(snap) {
+  const p = snap && snap.plan;
+  return !!(snap && snap.version === PLAN_SNAPSHOT_VERSION && snap.inputKey === planInputKey(S.project) &&
+    p && p.W > 0 && p.H > 0 && Array.isArray(p.lines) && Array.isArray(p.cuts) &&
+    p.style && p.fx && Number.isFinite(+p.duration));
+}
+function finishPlanUi(saveSnapshot) {
+  if (S.t > S.plan.duration) S.t = 0;
+  renderLines(); sizeViewport(); drawTimeline(); updateTimeUI();
+  S.need = true;
+  if (saveSnapshot) { storePlanSnapshot(); autosave(); }
+  ensureFonts(); drawSwatch(); showNow();
+  clearTimeout(warmTimer); warmTimer = setTimeout(warm, 450);
+}
+function restorePlanSnapshot() {
+  const snap = S.project && S.project.planSnapshot;
+  if (!validPlanSnapshot(snap)) return false;
+  try {
+    S.layoutPreview = null;
+    S.plan = plainPlan(snap.plan);
+    S.activePlanKey = snap.inputKey;
+    finishPlanUi(false);
+    return true;
+  } catch (e) {
+    console.warn('plan snapshot restore', e);
+    return false;
+  }
+}
+
 /* ---------------- planning ---------------- */
 function audioLike() {
   const T = S.project.timing;
@@ -281,10 +354,8 @@ function audioLike() {
 function replan() {
   S.layoutPreview = null;
   S.plan = J.plan(S.project, audioLike());
-  if (S.t > S.plan.duration) S.t = 0;
-  renderLines(); sizeViewport(); drawTimeline(); updateTimeUI();
-  S.need = true; autosave(); ensureFonts(); drawSwatch(); showNow();
-  clearTimeout(warmTimer); warmTimer = setTimeout(warm, 450);
+  S.activePlanKey = planInputKey(S.project);
+  finishPlanUi(true);
 }
 /* pre-decompose glyphs used by piece animations while the editor is idle, so playback does not hitch */
 let warmTimer = 0, warmJob = 0;
@@ -1155,13 +1226,23 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
-  // Build an initial plan before any async audio restore so resize/draw observers
-  // never see S.plan === null during startup.
-  syncUI(); replan();
+  syncUI();
+  // Prefer the saved finished plan. Older projects without a snapshot are
+  // generated once with the current planner, then immediately upgraded.
+  const frozen = restorePlanSnapshot();
+  if (!frozen) replan();
   if (S.project.audio && S.project.audio.id) {
     $('audioName').textContent = `${S.project.audio.name || '保存済みの曲'}（復元中…）`;
     await restoreProjectAudio();
-    syncUI(); replan();
+    syncUI();
+    if (frozen) {
+      // Audio restore only affects playback/timeline waveform; keep the saved visual plan.
+      drawTimeline(); updateTimeUI(); S.need = true;
+    } else {
+      // Old projects had no saved plan, so regenerate once with the restored audio,
+      // then freeze that result for future opens.
+      replan();
+    }
   }
   let mode = 'easy'; try { mode = localStorage.getItem('jizura.mode') || 'easy'; } catch (e) {}
   setMode(mode); commit();
@@ -1173,5 +1254,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey };
 })();
