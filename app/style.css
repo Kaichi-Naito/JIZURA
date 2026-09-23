@@ -80,6 +80,10 @@ h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 1
 .syntax ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audio-name { font-size: 12px; overflow-wrap: anywhere; }
+.preview-volume { display: grid; grid-template-columns: auto minmax(90px, 1fr) 44px; gap: 4px 8px; align-items: center; font-size: 11px; color: var(--muted); }
+.preview-volume input { width: 100%; accent-color: var(--amber); }
+.preview-volume output { text-align: right; color: var(--text); }
+.preview-volume small { grid-column: 2 / 4; color: var(--faint); }
 .fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
 .field input, .field select { width: 100%; }
@@ -102,8 +106,14 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .time { width: 100%; padding: 3px 5px; font-size: 12px; }
 .ln .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
-.ln .tools { display: flex; gap: 4px; flex: none; }
-.ln .tools select { padding: 2px 4px; font-size: 11px; max-width: 92px; }
+.ln .tools { display: flex; gap: 4px; flex: none; align-items: center; }
+.ln .tools select, .ln .layout-trigger { padding: 2px 4px; font-size: 11px; max-width: 92px; min-width: 0; }
+.ln .line-style { width: 92px; }
+.ln .layout-trigger { width: 92px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.layout-menu { position: fixed; z-index: 100; width: 230px; max-height: min(360px, 55vh); overflow-y: auto; padding: 5px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel); box-shadow: 0 10px 36px rgba(0,0,0,.55); overscroll-behavior: contain; }
+.layout-menu button { display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 2px; background: transparent; text-align: left; font-size: 12px; color: var(--text); }
+.layout-menu button:hover, .layout-menu button.previewing { background: var(--raised2); color: var(--cyan); }
+.layout-menu button.selected { color: var(--amber); }
 .ln .cuts { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
 .ln .cuts span { font-size: 10px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; }
 .ln .cuts span:hover { color: var(--text); border-color: var(--amber); }
