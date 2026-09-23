@@ -60,9 +60,89 @@ function setBadges(d) {
 }
 function loadLocal() { try { const s = localStorage.getItem(LS_KEY); if (s) return mergeProject(JSON.parse(s)); } catch (e) {} return mergeProject(null); }
 let saveTimer = 0;
-function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 700); }
-function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
+function autosave() { clearTimeout(saveTimer); scheduleEditorHistory(); saveTimer = setTimeout(flushSave, 700); }
+function flushSave() {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {}
+  scheduleEditorHistory();
+}
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
+
+/* ---------------- editor-wide undo / redo ----------------
+   Ctrl/Cmd+Z belongs to JIZURA as a whole, even while a text/number input is focused. */
+const EH = { list: [], i: -1 };
+let editorHistTimer = 0, editorHistoryApplying = false;
+function editorSnap() {
+  if (!S.project) return '';
+  const p = JSON.parse(JSON.stringify(S.project));
+  delete p.planSnapshot; // large derived data; deterministic project inputs are enough inside one app version
+  return JSON.stringify(p);
+}
+function recordEditorHistory(force = false) {
+  clearTimeout(editorHistTimer);
+  if (editorHistoryApplying || !S.project) return;
+  const s = editorSnap();
+  if (!force && EH.i >= 0 && EH.list[EH.i] === s) return;
+  EH.list = EH.list.slice(0, EH.i + 1);
+  if (EH.list[EH.list.length - 1] !== s) EH.list.push(s);
+  EH.i = EH.list.length - 1;
+  if (EH.list.length > 80) {
+    const n = EH.list.length - 80;
+    EH.list.splice(0, n); EH.i -= n;
+  }
+}
+function scheduleEditorHistory() {
+  if (editorHistoryApplying || !S.project) return;
+  clearTimeout(editorHistTimer);
+  editorHistTimer = setTimeout(() => recordEditorHistory(), 420);
+}
+function resetEditorHistory() {
+  clearTimeout(editorHistTimer);
+  EH.list = []; EH.i = -1;
+  recordEditorHistory(true);
+}
+function applyEditorHistory(index, label) {
+  if (index < 0 || index >= EH.list.length) return false;
+  editorHistoryApplying = true;
+  try {
+    pause();
+    S.project = mergeProject(JSON.parse(EH.list[index]));
+    fontKey = '';
+    syncUI(); replan(); flushSave();
+    toast(label);
+    return true;
+  } finally {
+    editorHistoryApplying = false;
+  }
+}
+function editorUndo() {
+  clearTimeout(editorHistTimer);
+  clearTimeout(replanTimer);
+  const cur = editorSnap();
+  if (EH.i < 0) resetEditorHistory();
+  if (EH.list[EH.i] !== cur) {
+    EH.list = EH.list.slice(0, EH.i + 1);
+    EH.list.push(cur); EH.i = EH.list.length - 1;
+  }
+  if (EH.i <= 0) return false;
+  EH.i--;
+  return applyEditorHistory(EH.i, '元に戻しました');
+}
+function editorRedo() {
+  clearTimeout(editorHistTimer);
+  clearTimeout(replanTimer);
+  const cur = editorSnap();
+  if (EH.i < 0) resetEditorHistory();
+  if (EH.list[EH.i] !== cur) {
+    // A new edit after Undo starts a new branch; the old Redo chain is discarded.
+    EH.list = EH.list.slice(0, EH.i + 1);
+    EH.list.push(cur); EH.i = EH.list.length - 1;
+    return false;
+  }
+  if (EH.i >= EH.list.length - 1) return false;
+  EH.i++;
+  return applyEditorHistory(EH.i, 'やり直しました');
+}
 
 /* ---------------- audio persistence ----------------
    Browsers do not expose a reusable full local file path from <input type=file>.
@@ -1314,11 +1394,23 @@ function bind() {
     try {
       $('audioName').textContent = 'プロジェクトを読み込み中…';
       await applyProjectData(JSON.parse(await f.text()));
+      resetEditorHistory();
     }
     catch (err) { showMsg('プロジェクトを読み込めませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3500); }
     e.target.value = '';
   });
   document.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && !e.altKey && e.code === 'KeyZ') {
+      e.preventDefault();
+      e.shiftKey ? editorRedo() : editorUndo();
+      return;
+    }
+    if (mod && !e.altKey && e.code === 'KeyY') {
+      e.preventDefault();
+      editorRedo();
+      return;
+    }
     const tag = (e.target && e.target.tagName) || '';
     const typing = /INPUT|TEXTAREA|SELECT/.test(tag) && e.target.type !== 'range' && e.target.type !== 'checkbox';
     if (S.tap && (e.code === 'Space' || e.code === 'Enter') && !typing) { e.preventDefault(); tapNow(); return; }
@@ -1373,6 +1465,7 @@ async function boot() {
   }
   let mode = 'easy'; try { mode = localStorage.getItem('jizura.mode') || 'easy'; } catch (e) {}
   setMode(mode); commit();
+  resetEditorHistory();
   // open on a representative frame (end of the first cut's entrance)
   const c0 = S.plan.cuts.find(c => c.line >= 0);
   if (c0) seek(c0.start + Math.min(c0.dur * 0.6, c0.inDur + 0.25));
@@ -1381,5 +1474,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory };
 })();
