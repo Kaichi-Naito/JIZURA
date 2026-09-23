@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
+const S = { project: null, plan: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -63,6 +63,172 @@ let saveTimer = 0;
 function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 700); }
 function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
+
+/* ---------------- audio persistence ----------------
+   Browsers do not expose a reusable full local file path from <input type=file>.
+   Store the source audio bytes in IndexedDB for automatic restore, and embed them
+   in an explicitly saved .jizura.json so the project remains portable. */
+const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio';
+let audioDbJob = null;
+function openAudioDb() {
+  if (!window.indexedDB) return Promise.resolve(null);
+  if (audioDbJob) return audioDbJob;
+  audioDbJob = new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(AUDIO_DB_NAME, 1); } catch (e) { reject(e); return; }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
+  }).catch(e => { audioDbJob = null; throw e; });
+  return audioDbJob;
+}
+async function putStoredAudio(meta, file) {
+  const db = await openAudioDb(); if (!db) throw new Error('このブラウザでは楽曲の自動保存を利用できません');
+  const blob = file instanceof Blob ? file.slice(0, file.size, file.type || meta.type || '') : new Blob([file], { type: meta.type || '' });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE, 'readwrite');
+    tx.objectStore(AUDIO_STORE).put({ id: meta.id, name: meta.name, type: meta.type || '', size: blob.size, lastModified: meta.lastModified || 0, blob });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('楽曲を保存できませんでした'));
+    tx.onabort = () => reject(tx.error || new Error('楽曲の保存が中断されました'));
+  });
+}
+async function getStoredAudio(id) {
+  if (!id) return null;
+  try {
+    const db = await openAudioDb(); if (!db) return null;
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUDIO_STORE, 'readonly'), req = tx.objectStore(AUDIO_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.warn('audio restore', e); return null; }
+}
+async function deleteStoredAudio(id) {
+  if (!id) return;
+  try {
+    const db = await openAudioDb(); if (!db) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUDIO_STORE, 'readwrite');
+      tx.objectStore(AUDIO_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('audio cleanup', e); }
+}
+function newAudioId() {
+  try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+  return 'audio-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+function audioMeta(file, id) {
+  return { id, name: file.name || 'audio', type: file.type || '', size: file.size || 0, lastModified: file.lastModified || 0 };
+}
+function recordToFile(rec) {
+  if (!rec || !rec.blob) return null;
+  try { return new File([rec.blob], rec.name || 'audio', { type: rec.type || rec.blob.type || '', lastModified: rec.lastModified || Date.now() }); }
+  catch (e) { const b = rec.blob; b.name = rec.name || 'audio'; return b; }
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => reject(fr.error || new Error('楽曲データを読み込めませんでした'));
+    fr.readAsDataURL(blob);
+  });
+}
+async function embeddedToFile(a) {
+  if (!a || !a.dataUrl) return null;
+  const res = await fetch(a.dataUrl);
+  const blob = await res.blob();
+  try { return new File([blob], a.name || 'audio', { type: a.type || blob.type || '', lastModified: a.lastModified || Date.now() }); }
+  catch (e) { blob.name = a.name || 'audio'; return blob; }
+}
+async function attachAudioFile(file, opt = {}) {
+  const oldId = S.project.audio && S.project.audio.id;
+  const id = opt.id || newAudioId();
+  const analyzed = await J.analyzeAudio(file);
+  S.audio = analyzed; S.audioSource = file;
+  S.project.audio = audioMeta(file, id);
+  let stored = true;
+  if (opt.persist !== false) {
+    try {
+      await putStoredAudio(S.project.audio, file);
+      if (oldId && oldId !== id) deleteStoredAudio(oldId);
+    } catch (e) {
+      stored = false;
+      console.warn('audio persist', e);
+    }
+  }
+  $('audioName').textContent = `${file.name || analyzed.name}（${J.fmtTime(analyzed.duration)}・約${analyzed.bpm}BPM${stored ? '・保存済み' : '・自動復元は保存できませんでした'}）`;
+  if (opt.setSnap !== false) S.project.timing.snap = true;
+  AP.setVolume(S.project.previewVolume ?? 1);
+  flushSave();
+  return true;
+}
+async function restoreProjectAudio() {
+  const meta = S.project && S.project.audio;
+  if (!meta || !meta.id) return false;
+  const rec = await getStoredAudio(meta.id);
+  if (!rec) {
+    $('audioName').textContent = `${meta.name || '保存済みの曲'}（楽曲データが見つかりません）`;
+    return false;
+  }
+  try {
+    const file = recordToFile(rec);
+    await attachAudioFile(file, { id: meta.id, persist: false, setSnap: false });
+    return true;
+  } catch (e) {
+    console.warn('audio restore analyze', e);
+    $('audioName').textContent = `${meta.name || '保存済みの曲'}（復元できませんでした）`;
+    return false;
+  }
+}
+async function restoreEmbeddedAudio(asset) {
+  try {
+    const file = await embeddedToFile(asset);
+    if (!file) return false;
+    const id = (S.project.audio && S.project.audio.id) || newAudioId();
+    await attachAudioFile(file, { id, persist: true, setSnap: false });
+    return true;
+  } catch (e) {
+    console.warn('embedded audio restore', e);
+    $('audioName').textContent = `${asset && asset.name ? asset.name : '保存済みの曲'}（復元できませんでした）`;
+    return false;
+  }
+}
+async function projectPayloadForSave() {
+  const out = JSON.parse(JSON.stringify(S.project));
+  let file = S.audioSource;
+  if (!file && out.audio && out.audio.id) {
+    const rec = await getStoredAudio(out.audio.id);
+    file = recordToFile(rec);
+  }
+  if (file) {
+    out._audioAsset = {
+      name: file.name || (out.audio && out.audio.name) || 'audio',
+      type: file.type || (out.audio && out.audio.type) || '',
+      size: file.size || 0,
+      lastModified: file.lastModified || (out.audio && out.audio.lastModified) || 0,
+      dataUrl: await blobToDataUrl(file),
+    };
+  }
+  return out;
+}
+async function applyProjectData(raw) {
+  pause();
+  S.audio = null; S.audioSource = null;
+  const p = Object.assign({}, raw || {});
+  const embedded = p._audioAsset || null;
+  delete p._audioAsset;
+  S.project = mergeProject(p);
+  if (embedded) await restoreEmbeddedAudio(embedded);
+  else await restoreProjectAudio();
+  syncUI(); replan(); flushSave();
+  return !!S.audio;
+}
 
 /* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
    Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
