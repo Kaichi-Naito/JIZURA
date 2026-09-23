@@ -1175,9 +1175,49 @@ function bind() {
   sc.addEventListener('change', () => { S.scrubbing = false; });
   const tl = $('timeline');
   let drag = false;
-  tl.addEventListener('pointerdown', e => { drag = true; tl.setPointerCapture(e.pointerId); timelineSeek(e); });
-  tl.addEventListener('pointermove', e => { if (drag) timelineSeek(e); });
-  tl.addEventListener('pointerup', () => { drag = false; });
+  tl.addEventListener('pointerdown', e => {
+    const b = timelineBoundaryAt(e, 9);
+    if (b) {
+      e.preventDefault();
+      if (S.playing) pause();
+      drag = false;
+      S.timelineBoundaryHover = b;
+      S.timelineBoundaryDrag = { boundary: b, pointerId: e.pointerId };
+      tl.style.cursor = 'col-resize';
+      tl.setPointerCapture(e.pointerId);
+      updateBoundaryDrag(e);
+      return;
+    }
+    drag = true;
+    S.timelineBoundaryHover = null;
+    tl.style.cursor = 'pointer';
+    tl.setPointerCapture(e.pointerId);
+    timelineSeek(e);
+  });
+  tl.addEventListener('pointermove', e => {
+    if (S.timelineBoundaryDrag) { updateBoundaryDrag(e); return; }
+    if (drag) { timelineSeek(e); return; }
+    const b = timelineBoundaryAt(e, 8);
+    const old = S.timelineBoundaryHover && S.timelineBoundaryHover.key;
+    const next = b && b.key;
+    S.timelineBoundaryHover = b;
+    tl.style.cursor = b ? 'col-resize' : 'pointer';
+    if (old !== next) drawTimeline();
+  });
+  tl.addEventListener('pointerup', e => {
+    if (S.timelineBoundaryDrag) {
+      try { if (tl.hasPointerCapture(e.pointerId)) tl.releasePointerCapture(e.pointerId); } catch (err) {}
+      finishBoundaryDrag();
+      return;
+    }
+    drag = false;
+  });
+  tl.addEventListener('pointercancel', () => { drag = false; finishBoundaryDrag(); });
+  tl.addEventListener('pointerleave', () => {
+    if (!drag && !S.timelineBoundaryDrag && S.timelineBoundaryHover) {
+      S.timelineBoundaryHover = null; tl.style.cursor = 'pointer'; drawTimeline();
+    }
+  });
   tl.addEventListener('wheel', timelineWheel, { passive: false });
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
