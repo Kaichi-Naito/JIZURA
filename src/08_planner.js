@@ -192,8 +192,6 @@ J.plan = (project, audio) => {
     for (const k of [lo - 1, lo]) if (k >= 0 && k < beats.length && Math.abs(beats[k] - t) < bd) { bd = Math.abs(beats[k] - t); best = beats[k]; }
     return best;
   };
-  const history = [], bgHistory = [], fxHistory = [];
-  let schemeIdx = 0;
   const nSchemes = st.schemes.length;
   const addEvent = (t, type, amp, dur) => plan.events.push({ t, type, amp, dur });
 
@@ -209,6 +207,11 @@ J.plan = (project, audio) => {
     const ov = (project.overrides || {})[li] || {};
     const lineSeed = ov.lock && ov.lockedSeed != null ? ov.lockedSeed : J.h(project.seed, li + 1, ov.seed | 0);
     const rng = J.rng(lineSeed);
+    // Random-choice history is intentionally scoped to this lyric line.
+    // Otherwise rerolling an earlier line changes the candidate weights of every later line,
+    // and a locked line can change when an unlocked line before it is shuffled.
+    const history = [], bgHistory = [], fxHistory = [];
+    let schemeIdx = 0;
     const n = [...ln.text.replace(/\s+/g, '')].length;
     const visEnd = Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
     const D = visEnd - s;
@@ -271,7 +274,9 @@ J.plan = (project, audio) => {
       // cut-to-cut transition (replaces the previous cut's exit and this cut's entrance)
       const prevCut = plan.cuts[plan.cuts.length - 1];
       let trans = null, transP = {}, transDur = 0;
-      const canTrans = prevCut && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5;
+      // A transition may rewrite prevCut.exit, so never let one lyric line mutate another.
+      // This keeps a one-line reroll local and prevents an unlocked next line from altering a locked line.
+      const canTrans = prevCut && prevCut.line === li && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5;
       if (canTrans) {
         trans = ov.trans && J.TRANS[ov.trans] ? ov.trans : pickTrans(rng, st, en, fx, emph, history);
         if (trans) {
