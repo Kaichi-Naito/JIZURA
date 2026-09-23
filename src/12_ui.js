@@ -393,11 +393,27 @@ function plainPlan(plan) {
 }
 function ensureLineCutOrdinals(plan) {
   const counts = {};
+  const cuts = [];
   for (const cut of (plan && plan.cuts) || []) {
     if (!(cut.line >= 0) || cut.layout === 'interlude') continue;
     const n = counts[cut.line] || 0;
     if (!(cut.lineCut >= 0)) cut.lineCut = n;
     counts[cut.line] = Math.max(n + 1, cut.lineCut + 1);
+    cuts.push(cut);
+  }
+  // Upgrade snapshots made before draggable boundaries existed. Assign older
+  // effect events to the closest cut start so they move with that cut.
+  for (const ev of (plan && plan.events) || []) {
+    if (Number.isFinite(ev.cutRel) && ev.line != null && ev.lineCut != null) continue;
+    let best = null, bd = Infinity;
+    for (const cut of cuts) {
+      const d = Math.abs(ev.t - cut.start);
+      if (d < bd) { bd = d; best = cut; }
+    }
+    if (best) {
+      ev.line = best.line; ev.lineCut = best.lineCut;
+      ev.cutRel = best.dur > 1e-6 ? (ev.t - best.start) / best.dur : 0;
+    }
   }
 }
 function storePlanSnapshot() {
