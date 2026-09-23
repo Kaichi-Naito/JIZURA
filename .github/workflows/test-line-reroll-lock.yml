@@ -1,0 +1,108 @@
+name: Test line reroll and lock fix
+
+on:
+  push:
+    branches:
+      - fix-line-reroll-lock
+    paths:
+      - ".github/workflows/test-line-reroll-lock.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build dev test page
+        run: python3 build.py --dev
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run regression checks
+        shell: bash
+        run: |
+          (cd dev/www && python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1) &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page()
+                  await page.goto("http://127.0.0.1:8765/test.html")
+                  result = await page.evaluate(r"""
+                  () => {
+                    const lyrics = ['夜明けの色を覚えてる','ほどけた声が遠くで鳴った','ねえまだ間に合うかな','透明なままじゃ終われない','最後の声を聞かせて'].join('\n');
+                    const timing = { bpm: 0, offset: 0, snap: false, tail: 0.5, lineTimes: {0:0,1:3,2:6,3:9,4:12}, lineScale: 1 };
+                    const norm = (plan, line) => plan.cuts
+                      .filter(c => c.line === line)
+                      .map(c => {
+                        const x = JSON.parse(JSON.stringify(c));
+                        delete x.index;
+                        return x;
+                      });
+                    const eq = (a,b) => JSON.stringify(a) === JSON.stringify(b);
+
+                    // 1) Per-line dice: only the selected line may change.
+                    const p1 = J.defaultProject();
+                    p1.lyrics = lyrics;
+                    p1.timing = timing;
+                    p1.seed = 123456789;
+                    const a = J.plan(p1, null);
+                    const before = [0,1,2,3,4].map(i => norm(a, i));
+                    p1.overrides[1] = { seed: 1 };
+                    const b = J.plan(p1, null);
+                    const after = [0,1,2,3,4].map(i => norm(b, i));
+                    const changedOthers = [0,2,3,4].filter(i => !eq(before[i], after[i]));
+                    if (changedOthers.length) throw new Error('Per-line reroll changed other lines: ' + changedOthers.join(','));
+                    if (a.lines[1].seed === b.lines[1].seed) throw new Error('Target line seed did not change');
+
+                    // 2) Global shuffle: a locked line must remain identical.
+                    const p2 = J.defaultProject();
+                    p2.lyrics = lyrics;
+                    p2.timing = timing;
+                    p2.seed = 246813579;
+                    const base = J.plan(p2, null);
+                    p2.overrides[3] = { lock: true, lockedSeed: base.lines[3].seed };
+                    const lockedA = J.plan(p2, null);
+                    const lockedBefore = norm(lockedA, 3);
+                    const unlockedBefore = [0,1,2,4].map(i => norm(lockedA, i));
+                    p2.seed = 975318642;
+                    const lockedB = J.plan(p2, null);
+                    const lockedAfter = norm(lockedB, 3);
+                    if (!eq(lockedBefore, lockedAfter)) throw new Error('Locked line changed after global shuffle');
+                    const unlockedAfter = [0,1,2,4].map(i => norm(lockedB, i));
+                    if (!unlockedBefore.some((x, i) => !eq(x, unlockedAfter[i]))) throw new Error('No unlocked line changed after global shuffle');
+
+                    // 3) Cross-line transitions still work, but may not rewrite the previous lyric line.
+                    const transKey = J.TRANS_ORDER[0];
+                    if (!transKey) throw new Error('No transition registered');
+                    const p3 = J.defaultProject();
+                    p3.lyrics = '前の行\n次の行';
+                    p3.timing = { bpm: 0, offset: 0, snap: false, tail: 0.5, lineTimes: {0:0,1:3}, lineScale: 1 };
+                    p3.overrides = {0:{single:true, exit:'blur'}, 1:{single:true, trans:transKey}};
+                    const tr = J.plan(p3, null);
+                    const c0 = tr.cuts.find(c => c.line === 0 && c.layout !== 'interlude');
+                    const c1 = tr.cuts.find(c => c.line === 1 && c.layout !== 'interlude');
+                    if (!c0 || !c1) throw new Error('Transition test cuts missing');
+                    if (c0.exit !== 'blur') throw new Error('Cross-line transition rewrote previous line exit: ' + c0.exit);
+                    if (c1.trans !== transKey || c1.enter !== 'cut') throw new Error('Cross-line transition was not preserved');
+                    const cv = document.createElement('canvas');
+                    cv.width = 480; cv.height = 270;
+                    new J.Renderer().frame(cv.getContext('2d'), tr, c1.start + (c1.transDur || 0.35) * 0.5, { scale: cv.width / tr.W, fast: true });
+
+                    return { ok: true, targetSeedBefore: a.lines[1].seed, targetSeedAfter: b.lines[1].seed, lockedSeed: base.lines[3].seed, transition: transKey };
+                  }
+                  """)
+                  print(result)
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
