@@ -801,6 +801,10 @@ function syncUI() {
   $('offset').value = S.project.timing.offset ?? 0.4;
   $('lineScale').value = S.project.timing.lineScale ?? 1;
   $('snap').checked = !!S.project.timing.snap;
+  const pv = Math.round(J.clamp(S.project.previewVolume ?? 1, 0, 2) * 100);
+  $('previewVolume').value = String(pv);
+  $('previewVolumeValue').textContent = pv + '%';
+  AP.setVolume(pv / 100);
   document.querySelectorAll('.wa-toggle').forEach(el => { el.checked = S.project.wa !== false; });
   document.querySelectorAll('.extra-toggle').forEach(el => { el.checked = S.project.extra === true; });
   renderFontRoles(); renderColors(); renderFx(); renderTech(); syncOut(); drawStyleGrid();
@@ -808,7 +812,12 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
-  $('lyrics').addEventListener('input', e => { S.project.lyrics = e.target.value; replanSoon(260); });
+  $('lyrics').addEventListener('input', e => {
+    const next = e.target.value, prev = S.project.lyrics;
+    remapLineIndexedState(prev, next);
+    S.project.lyrics = next;
+    replanSoon(260);
+  });
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
@@ -818,6 +827,13 @@ function bind() {
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
+  $('previewVolume').addEventListener('input', e => {
+    const pct = J.clamp(+e.target.value || 0, 0, 200);
+    S.project.previewVolume = pct / 100;
+    $('previewVolumeValue').textContent = Math.round(pct) + '%';
+    AP.setVolume(S.project.previewVolume);
+    autosave();
+  });
   $('btnTap').addEventListener('click', () => (S.tap ? stopTap() : startTap()));
   $('tapBtn').addEventListener('click', tapNow);
   $('tapStop').addEventListener('click', () => { pause(); stopTap(); });
@@ -927,7 +943,8 @@ function bind() {
     else if (e.code === 'ArrowLeft') seek(S.t - (e.shiftKey ? 1 : 1 / S.plan.fps));
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
-  window.addEventListener('resize', () => { sizeViewport(); drawTimeline(); });
+  $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
+  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
 }
 
