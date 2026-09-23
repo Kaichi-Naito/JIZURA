@@ -192,8 +192,6 @@ J.plan = (project, audio) => {
     for (const k of [lo - 1, lo]) if (k >= 0 && k < beats.length && Math.abs(beats[k] - t) < bd) { bd = Math.abs(beats[k] - t); best = beats[k]; }
     return best;
   };
-  const history = [], bgHistory = [], fxHistory = [];
-  let schemeIdx = 0;
   const nSchemes = st.schemes.length;
   const addEvent = (t, type, amp, dur) => plan.events.push({ t, type, amp, dur });
 
@@ -209,6 +207,11 @@ J.plan = (project, audio) => {
     const ov = (project.overrides || {})[li] || {};
     const lineSeed = ov.lock && ov.lockedSeed != null ? ov.lockedSeed : J.h(project.seed, li + 1, ov.seed | 0);
     const rng = J.rng(lineSeed);
+    // Random-choice history/state is intentionally scoped to this lyric line.
+    // Otherwise rerolling an earlier line changes the candidate weights of every later line,
+    // and a locked line can change when an unlocked line before it is shuffled.
+    const history = [], bgHistory = [], fxHistory = [];
+    let schemeIdx = 0;
     const n = [...ln.text.replace(/\s+/g, '')].length;
     const visEnd = Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
     const D = visEnd - s;
@@ -279,7 +282,10 @@ J.plan = (project, audio) => {
           transDur = J.clamp(TD.dur || 0.35, 0.12, Math.min(0.6, dur * 0.45));
           transP = TD.plan ? TD.plan(rng, st) : {};
           enter = 'cut'; inDur = 0.12;
-          prevCut.exit = 'cut'; prevCut.outDur = 0;
+          // Inside one lyric line, the transition replaces both adjacent cut animations.
+          // Across lyric lines, do not rewrite the previous line: the renderer samples its
+          // resting frame before the exit animation instead.
+          if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
       const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
