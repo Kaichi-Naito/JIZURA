@@ -274,9 +274,7 @@ J.plan = (project, audio) => {
       // cut-to-cut transition (replaces the previous cut's exit and this cut's entrance)
       const prevCut = plan.cuts[plan.cuts.length - 1];
       let trans = null, transP = {}, transDur = 0;
-      // A transition may rewrite prevCut.exit, so never let one lyric line mutate another.
-      // This keeps a one-line reroll local and prevents an unlocked next line from altering a locked line.
-      const canTrans = prevCut && prevCut.line === li && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5;
+      const canTrans = prevCut && Math.abs(prevCut.end - cs) < 0.06 && prevCut.layout !== 'interlude' && dur > 0.5;
       if (canTrans) {
         trans = ov.trans && J.TRANS[ov.trans] ? ov.trans : pickTrans(rng, st, en, fx, emph, history);
         if (trans) {
@@ -284,7 +282,10 @@ J.plan = (project, audio) => {
           transDur = J.clamp(TD.dur || 0.35, 0.12, Math.min(0.6, dur * 0.45));
           transP = TD.plan ? TD.plan(rng, st) : {};
           enter = 'cut'; inDur = 0.12;
-          prevCut.exit = 'cut'; prevCut.outDur = 0;
+          // Inside one lyric line, the transition replaces both adjacent cut animations.
+          // Across lyric lines, do not rewrite the previous line: the renderer samples its
+          // resting frame before the exit animation instead.
+          if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
       const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
