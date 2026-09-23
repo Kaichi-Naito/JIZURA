@@ -12,16 +12,25 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0 };
+const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
-  ctx: null, src: null, startAt: 0,
-  play(buffer, offset) {
+  ctx: null, src: null, gain: null, startAt: 0, volume: 1,
+  ensure() {
     if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!this.gain) { this.gain = this.ctx.createGain(); this.gain.connect(this.ctx.destination); }
+    this.gain.gain.value = this.volume;
+  },
+  setVolume(v) {
+    this.volume = J.clamp(+v || 0, 0, 2);
+    if (this.gain && this.ctx) this.gain.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+  },
+  play(buffer, offset) {
+    this.ensure();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     this.stop();
-    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.ctx.destination);
+    const s = this.ctx.createBufferSource(); s.buffer = buffer; s.connect(this.gain);
     const off = Math.max(0, Math.min(offset, buffer.duration - 0.01));
     s.start(0, off); this.src = s; this.startAt = this.ctx.currentTime - off;
   },
@@ -39,6 +48,7 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
   o.userFonts = (p && p.userFonts) || [];
@@ -54,6 +64,43 @@ function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave,
 function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
 
+/* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
+   Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
+function lineIndexMap(oldRaw, newRaw) {
+  const A = J.parseLyrics(oldRaw).lines.map(x => x.text);
+  const B = J.parseLyrics(newRaw).lines.map(x => x.text);
+  const m = A.length, n = B.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const pairs = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (A[i] === B[j]) { pairs.push([i, j]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  const bounds = [[-1, -1], ...pairs, [m, n]];
+  const map = {};
+  for (const [oi, nj] of pairs) map[nj] = oi;
+  for (let k = 0; k < bounds.length - 1; k++) {
+    const [oa, na] = bounds[k], [ob, nb] = bounds[k + 1];
+    const oc = ob - oa - 1, nc = nb - na - 1;
+    if (oc === nc) for (let q = 1; q <= oc; q++) map[na + q] = oa + q;
+  }
+  return { map, oldCount: m, newCount: n };
+}
+function remapLineIndexedState(oldRaw, newRaw) {
+  if (oldRaw === newRaw) return;
+  const { map } = lineIndexMap(oldRaw, newRaw);
+  const remap = src => {
+    const out = {};
+    for (const [nj, oi] of Object.entries(map)) if (src && src[oi] != null) out[nj] = src[oi];
+    return out;
+  };
+  S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  S.project.overrides = remap(S.project.overrides || {});
+}
+
 /* ---------------- planning ---------------- */
 function audioLike() {
   const T = S.project.timing;
@@ -66,6 +113,7 @@ function audioLike() {
   return null;
 }
 function replan() {
+  S.layoutPreview = null;
   S.plan = J.plan(S.project, audioLike());
   if (S.t > S.plan.duration) S.t = 0;
   renderLines(); sizeViewport(); drawTimeline(); updateTimeUI();
@@ -131,11 +179,13 @@ function sizeViewport() {
 }
 function draw() {
   const c = $('view'), ctx = c.getContext('2d');
+  const pv = S.layoutPreview;
+  const plan = pv ? pv.plan : S.plan, t = pv ? pv.t : S.t;
   const t0 = performance.now();
-  S.renderer.frame(ctx, S.plan, S.t, { scale: c.width / S.plan.W, fast: S.playing && S.slow });
+  S.renderer.frame(ctx, plan, t, { scale: c.width / plan.W, fast: S.playing && S.slow });
   const dt = performance.now() - t0;
   S.slow = S.playing ? (dt > 30 ? true : dt < 14 ? false : S.slow) : false;
-  updateTimeUI(); drawTimeline(); updateCutInfo();
+  if (!pv) { updateTimeUI(); drawTimeline(); updateCutInfo(); }
 }
 function tick(now) {
   requestAnimationFrame(tick);
