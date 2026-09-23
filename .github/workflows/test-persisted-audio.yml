@@ -5,6 +5,9 @@ on:
     branches:
       - persist-project-audio
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-persisted-audio.yml"
 
 permissions:
