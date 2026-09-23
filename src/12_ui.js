@@ -536,6 +536,16 @@ function drawTimeline() {
     x.fillStyle = '#5d5a63'; x.fillRect(lx, 0, 1, top);
     x.fillStyle = '#8e8a94'; x.fillText(String(ln.index + 1).padStart(2, '0'), lx + 3 * dpr, 12 * dpr);
   }
+  const hb = S.timelineBoundaryDrag ? S.timelineBoundaryDrag.boundary : S.timelineBoundaryHover;
+  if (hb) {
+    const bt = hb.right.start;
+    if (bt >= V.start && bt <= V.end) {
+      const bx = X(bt);
+      x.fillStyle = S.timelineBoundaryDrag ? '#f5a50c' : 'rgba(245,165,12,0.78)';
+      x.fillRect(Math.round(bx) - Math.max(1, dpr), top - 3 * dpr, Math.max(2, 2 * dpr), bot - top + 6 * dpr);
+      x.fillRect(Math.round(bx) - 4 * dpr, top - 6 * dpr, 8 * dpr, 4 * dpr);
+    }
+  }
   if (S.t >= V.start && S.t <= V.end) {
     const px = X(S.t);
     x.fillStyle = '#f5a50c'; x.fillRect(Math.round(px) - dpr, 0, 2 * dpr, h);
@@ -548,10 +558,66 @@ function drawTimeline() {
     x.textAlign = 'left';
   }
 }
-function timelineSeek(ev) {
+function timelineEditableBoundaries() {
+  ensureLineCutOrdinals(S.plan);
+  const cuts = (S.plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).slice().sort((a, b) => a.start - b.start);
+  const out = [];
+  for (let i = 1; i < cuts.length; i++) {
+    const left = cuts[i - 1], right = cuts[i];
+    if (Math.abs(left.end - right.start) > 0.07) continue;
+    if (right.end - left.start < 0.14) continue;
+    const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
+    if (key) out.push({ left, right, key });
+  }
+  return out;
+}
+function timelineBoundaryAt(ev, radius = 7) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect(), V = timelineView();
+  let best = null, bestPx = radius + 1;
+  for (const b of timelineEditableBoundaries()) {
+    if (b.right.start < V.start || b.right.start > V.end) continue;
+    const px = (b.right.start - V.start) / V.span * r.width;
+    const d = Math.abs((ev.clientX - r.left) - px);
+    if (d <= radius && d < bestPx) { best = b; bestPx = d; }
+  }
+  return best;
+}
+function timelineTimeAt(ev) {
   const r = $('timeline').getBoundingClientRect(), V = timelineView();
   const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
-  seek(V.start + p * V.span);
+  return V.start + p * V.span;
+}
+function timelineSeek(ev) {
+  seek(timelineTimeAt(ev));
+}
+function updateBoundaryDrag(ev) {
+  const d = S.timelineBoundaryDrag;
+  if (!d) return;
+  const result = J.setCutBoundaryTime && J.setCutBoundaryTime(S.plan, d.boundary.left, d.boundary.right, timelineTimeAt(ev));
+  if (!result) return;
+  const t = +result.time.toFixed(4);
+  if (!S.project.timing.cutBoundaries) S.project.timing.cutBoundaries = {};
+  S.project.timing.cutBoundaries[d.boundary.key] = t;
+  if (d.boundary.left.line !== d.boundary.right.line && d.boundary.right.lineCut === 0) {
+    if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
+    S.project.timing.lineTimes[d.boundary.right.line] = t;
+  }
+  S.t = t;
+  updateTimeUI();
+  drawTimeline();
+  S.need = true;
+}
+function finishBoundaryDrag() {
+  if (!S.timelineBoundaryDrag) return;
+  S.timelineBoundaryDrag = null;
+  S.timelineBoundaryHover = null;
+  $('timeline').style.cursor = 'pointer';
+  storePlanSnapshot();
+  autosave();
+  renderLines();
+  updateCutInfo();
+  drawTimeline();
+  S.need = true;
 }
 function timelineWheel(ev) {
   ev.preventDefault();
