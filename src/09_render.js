@@ -58,12 +58,14 @@ class Renderer {
   frame(ctx, plan, t, opt = {}) {
     const W = plan.W, H = plan.H, scale = opt.scale || 1;
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
-    const fx = plan.fx, st = plan.style, fps = plan.fps;
+    const fx = plan.fx, fps = plan.fps;
+    const styleFor = cut => (cut && plan.styles && cut.styleKey && plan.styles[cut.styleKey]) || plan.style;
     // motion is quantised to 'koma' drawings per second (24fps timebase); random flicker runs on a <=24Hz clock
     const stepDur = J.stepDur(fx, fps);
     const clock = J.komaOf(fx) > 0 ? stepDur : 1 / 24;
     const tq = Math.floor(t / stepDur + 1e-6) * stepDur;
     const mainCut = J.cutAt(plan, tq);
+    const st = styleFor(mainCut);
     const sc = st.schemes[mainCut ? mainCut.scheme % st.schemes.length : 0] || st.schemes[0];
     const allowFilter = this.filterOK && !opt.fast;
     ctx.save();
@@ -109,7 +111,7 @@ class Renderer {
     const energy = plan.energy ? plan.energy[Math.min(plan.energy.length - 1, Math.max(0, Math.floor(t * plan.energyRate)))] : null;
     // ---------- background graphic (per line) ----------
     if (!opt.transparent && !key && mainCut && mainCut.bg && mainCut.bg !== 'none' && J.BG[mainCut.bg]) {
-      const env = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo, bgOnly: true });
+      const env = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo, bgOnly: true });
       ctx.save();
       try { J.BG[mainCut.bg].draw(env, mainCut.bgP || {}); } catch (e) { console.warn('bg', mainCut.bg, e); }
       ctx.restore();
@@ -129,7 +131,7 @@ class Renderer {
     let layerBlur = 0, LX = null;
     if (allowFilter && mainCut && J.CAMERA[mainCut.cam] && mainCut.cam !== 'push') {
       try {
-        const e0 = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo });
+        const e0 = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: tq - mainCut.start, ltb: tq - mainCut.start, step, scale, allowFilter, energy, beat: beatInfo });
         const c0 = J.CAMERA[mainCut.cam].get(e0, mainCut.camP || {});
         if (c0 && c0.blur > 0.4) layerBlur = c0.blur;
       } catch (e) {}
@@ -144,10 +146,12 @@ class Renderer {
       const tp = Math.max(0, tq - P.lag);
       const cut = P.lag ? J.cutAt(plan, tp) : mainCut;
       if (!cut) continue;
-      const csc = st.schemes[cut.scheme % st.schemes.length] || st.schemes[0];
+      const cst = styleFor(cut);
+      const csc = cst.schemes[cut.scheme % cst.schemes.length] || cst.schemes[0];
       const lt = tp - cut.start;
       const X = LX || ctx;
       const env = this.makeEnv(X, plan, cut, csc, {
+        st: cst,
         pass: P.pass, passColor: P.pass === 'A' ? csc.ghostA : P.pass === 'B' ? csc.ghostB : null,
         t: tp, lt, ltb: lt + P.lag, step: Math.floor(tp / clock + 1e-6), scale, allowFilter, energy, beat: beatInfo,
       });
@@ -182,7 +186,8 @@ class Renderer {
         // Sample its final resting frame just before its own exit animation begins.
         const prevRestT = prev.outDur > 0 ? Math.max(prev.start, prev.end - prev.outDur - 1e-3) : Math.max(prev.start, prev.end - 1e-3);
         this.frame(A.getContext('2d'), plan, prevRestT, Object.assign({}, opt, { noTrans: true, noPost: true, noHud: true }));
-        const psc = st.schemes[prev.scheme % st.schemes.length] || st.schemes[0];
+        const pst = styleFor(prev);
+        const psc = pst.schemes[prev.scheme % pst.schemes.length] || pst.schemes[0];
         ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
         try { J.TRANS[mainCut.trans].draw(ctx, A, B, J.clamp(lt / dur), { cw, ch, sc, scPrev: psc, st, P: mainCut.transP || {}, step, t, scale, allowFilter, seed: mainCut.seed | 0, tmp: (w, h) => this.ensure(this.transC || (this.transC = mk(2, 2)), w, h) }); }
         catch (e) { console.warn('trans', mainCut.trans, e); }
@@ -190,13 +195,14 @@ class Renderer {
       }
     }
     // ---------- HUD ----------
-    if (plan.hud && !opt.noHud) {
-      const env = this.makeEnv(ctx, plan, mainCut, sc, { pass: 'main', t: tq, lt: 0, ltb: 0, step, scale, allowFilter, energy, beat: beatInfo });
+    const hudOn = fx.hud === 'on' ? true : fx.hud === 'off' ? false : !!st.hud;
+    if (hudOn && !opt.noHud) {
+      const env = this.makeEnv(ctx, plan, mainCut, sc, { st, pass: 'main', t: tq, lt: 0, ltb: 0, step, scale, allowFilter, energy, beat: beatInfo });
       J.drawHUD(env, plan);
     }
     ctx.restore();
     // ---------- post ----------
-    if (!opt.noPost) this.post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter);
+    if (!opt.noPost) this.post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter, st);
     if (key && !opt.noPost) this.keyFinish(ctx, key, opt);
   }
 
@@ -303,9 +309,9 @@ class Renderer {
     return bb;
   }
 
-  post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter) {
+  post(ctx, plan, t, tq, step, sc, scale, opt, allowFilter, activeStyle) {
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
-    const fx = plan.fx, st = plan.style;
+    const fx = plan.fx, st = activeStyle || plan.style;
     const active = plan.events.filter(ev => t >= ev.t && t < ev.t + Math.max(ev.dur, 1 / plan.fps));
     const needScratch = active.some(ev => ['slice', 'block', 'zoom', 'mosaic'].includes(ev.type) || (J.FXE[ev.type] && J.FXE[ev.type].scratch)) || (!opt.fast && (st.glow || 0) > 0);
     const S = needScratch ? this.ensure(this.scratch, cw, ch) : null;
@@ -319,7 +325,7 @@ class Renderer {
       if (D && D.draw) {
         if (D.scratch) copy();
         try {
-          D.draw(ctx, ev, k, { cw, ch, S, sc, st: plan.style, step: st2, t, scale, renderer: this, allowFilter, opt, tmp: (w, h) => this.ensure(this.tiny, w, h), tmp2: (w, h) => this.ensure(this.small2 || (this.small2 = mk(2, 2)), w, h) });
+          D.draw(ctx, ev, k, { cw, ch, S, sc, st, step: st2, t, scale, renderer: this, allowFilter, opt, tmp: (w, h) => this.ensure(this.tiny, w, h), tmp2: (w, h) => this.ensure(this.small2 || (this.small2 = mk(2, 2)), w, h) });
         } catch (e) { console.warn('fx', ev.type, e); }
         ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none'; ctx.imageSmoothingEnabled = true;
         continue;
