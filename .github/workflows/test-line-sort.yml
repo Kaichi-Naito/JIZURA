@@ -1,0 +1,107 @@
+name: Test line-list time sorting
+
+on:
+  push:
+    branches:
+      - sort-line-list-by-time
+    paths:
+      - ".github/workflows/test-line-sort.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Test line-list sorting
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                  errors = []
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#btnSortLines")
+
+                  await page.fill("#lyrics", "FIRST\nSECOND\nTHIRD")
+                  await page.wait_for_timeout(500)
+                  await page.evaluate("""() => {
+                    J.ui.project.timing.lineTimes = {0:10,1:2,2:6};
+                    J.ui.project.overrides = {0:{style:'sakura'},1:{lock:true,lockedSeed:123},2:{layout:'center'}};
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(250)
+
+                  def texts():
+                      return page.locator("#lineList .ln .txt").all_inner_texts()
+
+                  original = await texts()
+                  before = await page.evaluate("""() => ({
+                    times: JSON.stringify(J.ui.project.timing.lineTimes),
+                    overrides: JSON.stringify(J.ui.project.overrides),
+                    lyrics: J.ui.project.lyrics
+                  })""")
+                  if original != ["FIRST","SECOND","THIRD"]:
+                      raise RuntimeError(f"unexpected original order: {original}")
+
+                  await page.click("#btnSortLines")
+                  await page.wait_for_timeout(80)
+                  sorted_rows = await texts()
+                  pressed = await page.get_attribute("#btnSortLines","aria-pressed")
+                  if sorted_rows != ["SECOND","THIRD","FIRST"]:
+                      raise RuntimeError(f"time sort failed: {sorted_rows}")
+                  if pressed != "true":
+                      raise RuntimeError(f"sort button not pressed: {pressed}")
+
+                  during = await page.evaluate("""() => ({
+                    times: JSON.stringify(J.ui.project.timing.lineTimes),
+                    overrides: JSON.stringify(J.ui.project.overrides),
+                    lyrics: J.ui.project.lyrics
+                  })""")
+                  if during != before:
+                      raise RuntimeError(f"sort mutated project data: before={before}, after={during}")
+
+                  await page.click("#btnSortLines")
+                  await page.wait_for_timeout(80)
+                  restored = await texts()
+                  pressed2 = await page.get_attribute("#btnSortLines","aria-pressed")
+                  if restored != ["FIRST","SECOND","THIRD"] or pressed2 != "false":
+                      raise RuntimeError(f"restore original order failed: {restored}, pressed={pressed2}")
+
+                  if errors:
+                      raise RuntimeError("page errors: " + " | ".join(errors))
+                  print({"ok":True,"original":original,"sorted":sorted_rows,"restored":restored})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
