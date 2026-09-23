@@ -67,7 +67,13 @@
       </div>
 
       <div class="sec">
-        <div class="sec-h"><h2>行とカット</h2><span id="linesInfo" class="muted mono"></span></div>
+        <div class="sec-h">
+          <h2>行とカット</h2>
+          <div class="line-list-head-actions">
+            <span id="linesInfo" class="muted mono"></span>
+            <button id="btnSortLines" class="ghost small" type="button" aria-pressed="false" title="タイムコードの早い順（昇順）に並べる">時刻順 ↑</button>
+          </div>
+        </div>
         <ol id="lineList"></ol>
       </div>
     </section>

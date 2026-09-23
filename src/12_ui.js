@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null };
+const S = { project: null, plan: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -508,7 +508,12 @@ function renderLines() {
   const ov = S.project.overrides;
   const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
   const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
-  S.plan.lines.forEach((ln, i) => {
+  const rows = S.plan.lines.map((ln, i) => ({ ln, i }));
+  if (S.lineSortByTime) rows.sort((a, b) => (a.ln.start - b.ln.start) || (a.i - b.i));
+  const sortBtn = $('btnSortLines');
+  sortBtn.setAttribute('aria-pressed', String(S.lineSortByTime));
+  sortBtn.title = S.lineSortByTime ? '歌詞の元の行順に戻す' : 'タイムコードの早い順（昇順）に並べる';
+  rows.forEach(({ ln, i }) => {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln';
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
@@ -548,7 +553,7 @@ function renderLines() {
       sp.addEventListener('click', () => seek(c.start + Math.min(c.dur * 0.5, c.inDur + 0.05)));
       cutsEl.appendChild(sp);
     });
-    ol.appendChild(li); S.lineEls.push(li);
+    ol.appendChild(li); S.lineEls[i] = li;
   });
   $('linesInfo').textContent = `${S.plan.lines.length}行 / ${S.plan.cuts.length}カット`;
 }
@@ -992,6 +997,7 @@ function bind() {
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
+  $('btnSortLines').addEventListener('click', () => { S.lineSortByTime = !S.lineSortByTime; renderLines(); updateCutInfo(); });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
   $('previewVolume').addEventListener('input', e => {
     const pct = J.clamp(+e.target.value || 0, 0, 200);
