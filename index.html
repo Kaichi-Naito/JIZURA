@@ -104,7 +104,13 @@ h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 1
 button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px; background: var(--amber); color: #120c00; border-color: var(--amber); }
 
 /* line list */
-#lineList { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#lineList {
+  list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 6px;
+  max-height: clamp(220px, 42vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .ln { display: grid; grid-template-columns: 22px 66px minmax(0, 1fr); gap: 4px 6px; align-items: center; padding: 6px; border: 1px solid transparent; border-radius: var(--r); }
 .ln:hover { background: var(--raised); }
 .ln.cur { border-color: var(--line2); background: var(--raised); }
@@ -130,7 +136,7 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .transport .tc { font: 500 13px var(--mono); font-variant-numeric: tabular-nums; }
 .transport input[type=range] { flex: 1 1 160px; accent-color: var(--amber); }
 button.play { width: 40px; height: 34px; padding: 0; font-size: 14px; }
-#timeline { width: 100%; height: 76px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; touch-action: none; }
+#timeline { width: 100%; height: 76px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; touch-action: none; overscroll-behavior: contain; }
 .cutinfo { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 26px; }
 .chip { font-size: 11px; padding: 2px 8px; border-radius: 2px; border: 1px solid var(--line2); color: var(--text); background: var(--raised); }
 .chip b { font-weight: 500; color: var(--muted); margin-right: 5px; }
@@ -369,7 +375,7 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
         <button id="btnShuffle" class="accent" title="設定はそのままで構成だけ再抽選（ロックした行は維持）">シャッフル</button>
         <button id="btnOmakase" class="primary" title="スタイル・雰囲気・演出・配色をまるごとランダムに（キー R）">おまかせ</button>
       </div>
-      <canvas id="timeline" aria-label="タイムライン（クリックで移動）"></canvas>
+      <canvas id="timeline" aria-label="タイムライン（クリックで移動、ホイールで拡大縮小）"></canvas>
       <div class="cutinfo" id="cutInfo"></div>
     </section>
 
@@ -28705,7 +28711,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2 };
+const S = { project: null, plan: null, audio: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0 };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -28867,23 +28873,44 @@ function seek(t) {
 
 /* ---------------- timeline ---------------- */
 const layoutHue = k => (J.LAYOUT_ORDER.indexOf(k) * 37 + 30) % 360;
+function timelineView() {
+  const D = Math.max(0.001, S.plan.duration);
+  const zoom = J.clamp(S.timelineZoom || 1, 1, 32);
+  const span = D / zoom;
+  const maxStart = Math.max(0, D - span);
+  const start = J.clamp(S.timelineStart || 0, 0, maxStart);
+  S.timelineZoom = zoom;
+  S.timelineStart = start;
+  return { D, zoom, span, start, end: start + span };
+}
 function drawTimeline() {
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-  const x = c.getContext('2d'), D = Math.max(0.001, S.plan.duration), X = t => t / D * w;
+  const x = c.getContext('2d'), V = timelineView(), X = t => (t - V.start) / V.span * w;
   x.fillStyle = '#131316'; x.fillRect(0, 0, w, h);
   if (S.audio && S.audio.peaks) {
     const pk = S.audio.peaks, n = pk.length, sd = S.audio.duration;
     x.fillStyle = '#2b2b33';
-    for (let i = 0; i < w; i += 2) { const t = i / w * D; if (t > sd) break; const v = pk[Math.min(n - 1, Math.floor(t / sd * n))]; const hh = v * h * 0.8; x.fillRect(i, h * 0.6 - hh / 2, 1.5, hh); }
+    for (let i = 0; i < w; i += 2) {
+      const t = V.start + i / w * V.span;
+      if (t > sd) break;
+      const v = pk[Math.min(n - 1, Math.max(0, Math.floor(t / sd * n)))];
+      const hh = v * h * 0.8;
+      x.fillRect(i, h * 0.6 - hh / 2, 1.5, hh);
+    }
   }
   const beats = S.plan.beats || [];
   x.fillStyle = '#3a3a44';
-  for (const b of beats) { if (b > D) break; x.fillRect(Math.round(X(b)), h - 6 * dpr, 1, 6 * dpr); }
+  for (const b of beats) {
+    if (b < V.start) continue;
+    if (b > V.end) break;
+    x.fillRect(Math.round(X(b)), h - 6 * dpr, 1, 6 * dpr);
+  }
   const top = h * 0.3, bot = h - 8 * dpr;
   for (const cut of S.plan.cuts) {
-    const x0 = X(cut.start), x1 = X(cut.end);
+    if (cut.end <= V.start || cut.start >= V.end) continue;
+    const x0 = X(Math.max(cut.start, V.start)), x1 = X(Math.min(cut.end, V.end));
     const hue = layoutHue(cut.layout);
     x.fillStyle = `hsla(${hue},70%,58%,0.28)`; x.fillRect(x0, top, Math.max(1, x1 - x0 - 1), bot - top);
     x.fillStyle = `hsla(${hue},80%,62%,0.95)`; x.fillRect(x0, top, Math.max(1, 2 * dpr), bot - top);
@@ -28895,16 +28922,43 @@ function drawTimeline() {
   }
   x.font = `${10 * dpr}px monospace`;
   for (const ln of S.plan.lines) {
+    if (ln.start < V.start || ln.start > V.end) continue;
     const lx = X(ln.start);
     x.fillStyle = '#5d5a63'; x.fillRect(lx, 0, 1, top);
     x.fillStyle = '#8e8a94'; x.fillText(String(ln.index + 1).padStart(2, '0'), lx + 3 * dpr, 12 * dpr);
   }
-  const px = X(S.t);
-  x.fillStyle = '#f5a50c'; x.fillRect(Math.round(px) - dpr, 0, 2 * dpr, h);
+  if (S.t >= V.start && S.t <= V.end) {
+    const px = X(S.t);
+    x.fillStyle = '#f5a50c'; x.fillRect(Math.round(px) - dpr, 0, 2 * dpr, h);
+  }
+  if (V.zoom > 1.001) {
+    x.font = `${10 * dpr}px monospace`;
+    x.textAlign = 'right';
+    x.fillStyle = 'rgba(236,231,225,0.62)';
+    x.fillText(`×${V.zoom < 10 ? V.zoom.toFixed(1) : V.zoom.toFixed(0)}`, w - 6 * dpr, 12 * dpr);
+    x.textAlign = 'left';
+  }
 }
 function timelineSeek(ev) {
-  const r = $('timeline').getBoundingClientRect();
-  seek((ev.clientX - r.left) / r.width * S.plan.duration);
+  const r = $('timeline').getBoundingClientRect(), V = timelineView();
+  const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
+  seek(V.start + p * V.span);
+}
+function timelineWheel(ev) {
+  ev.preventDefault();
+  const delta0 = ev.deltaY || ev.deltaX;
+  if (!delta0) return;
+  let delta = delta0;
+  if (ev.deltaMode === 1) delta *= 16;
+  else if (ev.deltaMode === 2) delta *= window.innerHeight;
+  const r = $('timeline').getBoundingClientRect(), V = timelineView();
+  const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
+  const anchor = V.start + p * V.span;
+  const zoom = J.clamp(V.zoom * Math.exp(-delta * 0.0015), 1, 32);
+  const span = V.D / zoom;
+  S.timelineZoom = zoom;
+  S.timelineStart = zoom <= 1.0001 ? 0 : J.clamp(anchor - p * span, 0, Math.max(0, V.D - span));
+  drawTimeline();
 }
 
 /* ---------------- cut info ---------------- */
@@ -29349,6 +29403,7 @@ function bind() {
   tl.addEventListener('pointerdown', e => { drag = true; tl.setPointerCapture(e.pointerId); timelineSeek(e); });
   tl.addEventListener('pointermove', e => { if (drag) timelineSeek(e); });
   tl.addEventListener('pointerup', () => { drag = false; });
+  tl.addEventListener('wheel', timelineWheel, { passive: false });
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
     document.querySelectorAll('.tabpane').forEach(p => { p.hidden = p.dataset.pane !== b.dataset.tab; });
