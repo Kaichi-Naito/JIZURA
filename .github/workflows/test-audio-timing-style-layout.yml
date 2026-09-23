@@ -1,0 +1,169 @@
+name: Test audio timing style layout preview
+
+on:
+  push:
+    branches:
+      - audio-timing-line-style-layout-preview
+    paths:
+      - ".github/workflows/test-audio-timing-style-layout.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                  errors = []
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#lineList .ln")
+
+                  # 1) Preview volume is editor-only and persists in project state.
+                  await page.locator("#previewVolume").evaluate("(el) => { el.value='175'; el.dispatchEvent(new Event('input',{bubbles:true})); }")
+                  vol = await page.evaluate("J.ui.project.previewVolume")
+                  vol_text = await page.locator("#previewVolumeValue").inner_text()
+                  if abs(vol - 1.75) > 1e-9 or vol_text != "175%":
+                      raise RuntimeError(f"preview volume failed: {vol}, {vol_text}")
+
+                  # 2) Manual timecodes and per-line overrides follow unchanged later lyrics after a split.
+                  await page.fill("#lyrics", "AAA BBB\nSECOND\nTHIRD\nFOURTH")
+                  await page.wait_for_timeout(500)
+                  # Set explicit times on all original rows.
+                  vals = [1.25, 5.5, 9.75, 14.0]
+                  for i, v in enumerate(vals):
+                      inp = page.locator("#lineList .ln").nth(i).locator(".time")
+                      await inp.fill(str(v))
+                      await inp.press("Enter")
+                      await page.wait_for_timeout(80)
+                  # Give SECOND an override so we can verify it moves with the lyric too.
+                  await page.evaluate("J.ui.project.overrides[1] = Object.assign({}, J.ui.project.overrides[1] || {}, {style:'sakura', layout:'center'})")
+                  await page.fill("#lyrics", "AAA\nBBB\nSECOND\nTHIRD\nFOURTH")
+                  await page.wait_for_timeout(700)
+                  state = await page.evaluate("""() => ({
+                    times: J.ui.project.timing.lineTimes,
+                    overrides: J.ui.project.overrides,
+                    lines: J.ui.plan.lines.map(x => x.text)
+                  })""")
+                  if state["lines"] != ["AAA","BBB","SECOND","THIRD","FOURTH"]:
+                      raise RuntimeError(f"unexpected split lines: {state['lines']}")
+                  # SECOND/THIRD/FOURTH were old indices 1/2/3 and must now be 2/3/4.
+                  expected = {2: 5.5, 3: 9.75, 4: 14.0}
+                  for k, v in expected.items():
+                      got = state["times"].get(str(k))
+                      if got is None or abs(float(got) - v) > 1e-6:
+                          raise RuntimeError(f"timecode did not follow lyric at {k}: {state['times']}")
+                  ov2 = state["overrides"].get("2", {})
+                  if ov2.get("style") != "sakura" or ov2.get("layout") != "center":
+                      raise RuntimeError(f"override did not follow SECOND: {state['overrides']}")
+
+                  # 3) Per-line style changes style behavior, while colours remain from global project style.
+                  # Reset to a clean three-line project.
+                  await page.fill("#lyrics", "ONE\nTWO\nTHREE")
+                  await page.wait_for_timeout(600)
+                  await page.evaluate("""() => {
+                    J.ui.project.style = 'blueprint';
+                    J.ui.project.colors = {enabled:false};
+                    J.ui.project.overrides = {1:{style:'sakura'}};
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(300)
+                  sty = await page.evaluate("""() => {
+                    const p=J.ui.plan, c=p.cuts.find(x=>x.line===1 && x.layout!=='interlude');
+                    return {
+                      globalStyle:p.styleKey,
+                      cutStyle:c.styleKey,
+                      globalScheme:p.style.schemes[0],
+                      lineScheme:p.styles[c.styleKey].schemes[0],
+                      globalFont:p.style.fonts.display[0],
+                      lineFont:p.styles[c.styleKey].fonts.display[0]
+                    };
+                  }""")
+                  if sty["globalStyle"] != "blueprint" or sty["cutStyle"] != "sakura":
+                      raise RuntimeError(f"per-line style key failed: {sty}")
+                  for key in ("bg","fg","sub","accent","ghostA","ghostB"):
+                      if sty["globalScheme"].get(key) != sty["lineScheme"].get(key):
+                          raise RuntimeError(f"line style changed global colour {key}: {sty}")
+                  if sty["globalFont"] == sty["lineFont"]:
+                      raise RuntimeError(f"line style did not change style behavior/font: {sty}")
+
+                  # Render a frame using the per-line style to catch renderer errors.
+                  await page.evaluate("""() => {
+                    const c=J.ui.plan.cuts.find(x=>x.line===1 && x.layout!=='interlude');
+                    J.ui.renderer.frame(document.querySelector('#view').getContext('2d'), J.ui.plan, c.start + Math.min(.5,c.dur*.5), {scale:document.querySelector('#view').width/J.ui.plan.W, fast:true});
+                  }""")
+
+                  # 4) Layout popup previews on hover without committing, then commits on click.
+                  # Remove the earlier layout override on line 2 so this test starts from automatic.
+                  await page.evaluate("delete J.ui.project.overrides[1].layout; J.uiApi.replan();")
+                  await page.wait_for_timeout(250)
+                  trigger = page.locator("#lineList .ln").nth(1).locator(".layout-trigger")
+                  await trigger.click()
+                  await page.wait_for_selector(".layout-menu")
+                  candidate = page.locator(".layout-menu button[data-k='huge']")
+                  if await candidate.count() == 0:
+                      candidate = page.locator(".layout-menu button").nth(2)
+                  key = await candidate.get_attribute("data-k")
+                  before_override = await page.evaluate("J.ui.project.overrides[1] && J.ui.project.overrides[1].layout")
+                  await candidate.hover()
+                  await page.wait_for_timeout(160)
+                  preview = await page.evaluate("""() => {
+                    const pv=J.ui.layoutPreview;
+                    if(!pv) return null;
+                    const c=pv.plan.cuts.find(x=>x.line===1 && x.layout!=='interlude');
+                    return {layout:c&&c.layout, committed:J.ui.project.overrides[1]&&J.ui.project.overrides[1].layout};
+                  }""")
+                  if not preview or preview["layout"] != key:
+                      raise RuntimeError(f"hover preview failed: key={key}, preview={preview}")
+                  if preview["committed"] is not None:
+                      raise RuntimeError(f"hover unexpectedly committed layout: {preview}")
+                  await candidate.click()
+                  await page.wait_for_timeout(300)
+                  committed = await page.evaluate("J.ui.project.overrides[1] && J.ui.project.overrides[1].layout")
+                  if committed != key:
+                      raise RuntimeError(f"layout click did not commit: {committed} != {key}")
+                  pv_after = await page.evaluate("J.ui.layoutPreview")
+                  if pv_after is not None:
+                      raise RuntimeError("temporary layout preview was not cleared after commit")
+
+                  if errors:
+                      raise RuntimeError("page errors: " + " | ".join(errors))
+                  print({"ok": True, "volume": vol_text, "times": state["times"], "style": sty, "layout": key})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
