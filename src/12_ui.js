@@ -1149,12 +1149,14 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
-  syncUI();
+  // Build an initial plan before any async audio restore so resize/draw observers
+  // never see S.plan === null during startup.
+  syncUI(); replan();
   if (S.project.audio && S.project.audio.id) {
     $('audioName').textContent = `${S.project.audio.name || '保存済みの曲'}（復元中…）`;
     await restoreProjectAudio();
+    syncUI(); replan();
   }
-  syncUI(); replan();
   let mode = 'easy'; try { mode = localStorage.getItem('jizura.mode') || 'easy'; } catch (e) {}
   setMode(mode); commit();
   // open on a representative frame (end of the first cut's entrance)
