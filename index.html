@@ -3083,7 +3083,7 @@ J.plan = (project, audio) => {
     const ov = (project.overrides || {})[li] || {};
     const lineSeed = ov.lock && ov.lockedSeed != null ? ov.lockedSeed : J.h(project.seed, li + 1, ov.seed | 0);
     const rng = J.rng(lineSeed);
-    // Random-choice history is intentionally scoped to this lyric line.
+    // Random-choice history/state is intentionally scoped to this lyric line.
     // Otherwise rerolling an earlier line changes the candidate weights of every later line,
     // and a locked line can change when an unlocked line before it is shuffled.
     const history = [], bgHistory = [], fxHistory = [];
