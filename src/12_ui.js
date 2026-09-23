@@ -1090,12 +1090,28 @@ function bind() {
   const openTerms = () => { if (dlg.showModal) { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', ''); };
   document.querySelectorAll('.terms-open').forEach(b => b.addEventListener('click', openTerms));
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close ? dlg.close() : dlg.removeAttribute('open'); });   // click on the backdrop
-  $('btnSave').addEventListener('click', () => J.saveFile(baseName() + '.jizura.json', JSON.stringify(S.project, null, 1)));
+  $('btnSave').addEventListener('click', async () => {
+    const b = $('btnSave'), old = b.textContent;
+    b.disabled = true; b.textContent = '保存準備中…';
+    try {
+      const payload = await projectPayloadForSave();
+      await J.saveFile(baseName() + '.jizura.json', JSON.stringify(payload, null, 1));
+    } catch (err) {
+      console.error(err);
+      showMsg('プロジェクトを保存できませんでした: ' + (err && err.message ? err.message : err));
+      setTimeout(() => showMsg(null), 3500);
+    } finally {
+      b.disabled = false; b.textContent = old;
+    }
+  });
   $('btnAE').addEventListener('click', () => J.saveFile(baseName() + '_ae.json', JSON.stringify(J.planForAE(S.plan, S.project), null, 1)));
   $('fileProject').addEventListener('change', async e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
-    try { S.project = mergeProject(JSON.parse(await f.text())); syncUI(); replan(); }
-    catch (err) { showMsg('プロジェクトを読み込めませんでした'); setTimeout(() => showMsg(null), 2500); }
+    try {
+      $('audioName').textContent = 'プロジェクトを読み込み中…';
+      await applyProjectData(JSON.parse(await f.text()));
+    }
+    catch (err) { showMsg('プロジェクトを読み込めませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3500); }
     e.target.value = '';
   });
   document.addEventListener('keydown', e => {
@@ -1116,21 +1132,29 @@ function bind() {
 
 /* song file -> beat analysis (file input, or a host such as the After Effects panel) */
 async function loadAudioFile(f) {
-  $('audioName').textContent = '解析中…';
+  $('audioName').textContent = '解析・保存中…';
   try {
     pause();
-    S.audio = await J.analyzeAudio(f);
-    $('audioName').textContent = `${f.name}（${J.fmtTime(S.audio.duration)}・約${S.audio.bpm}BPM）`;
-    S.project.timing.snap = true;
+    await attachAudioFile(f, { persist: true, setSnap: true });
     syncUI(); replan();
     return true;
-  } catch (err) { $('audioName').textContent = '読み込めませんでした: ' + err.message; S.audio = null; return false; }
+  } catch (err) {
+    $('audioName').textContent = '読み込めませんでした: ' + err.message;
+    S.audio = null; S.audioSource = null;
+    return false;
+  }
 }
 
 /* ---------------- boot ---------------- */
-function boot() {
+async function boot() {
   S.project = loadLocal();
-  bind(); syncUI(); replan();
+  bind();
+  syncUI();
+  if (S.project.audio && S.project.audio.id) {
+    $('audioName').textContent = `${S.project.audio.name || '保存済みの曲'}（復元中…）`;
+    await restoreProjectAudio();
+  }
+  syncUI(); replan();
   let mode = 'easy'; try { mode = localStorage.getItem('jizura.mode') || 'easy'; } catch (e) {}
   setMode(mode); commit();
   // open on a representative frame (end of the first cut's entrance)
@@ -1138,8 +1162,8 @@ function boot() {
   if (c0) seek(c0.start + Math.min(c0.dur * 0.6, c0.inDur + 0.25));
   requestAnimationFrame(tick);
 }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData };
 })();
