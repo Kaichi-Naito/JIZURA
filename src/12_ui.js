@@ -340,21 +340,25 @@ function updateCutInfo() {
 function renderLines() {
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
-  const layoutOpts = '<option value="">自動</option>' + J.LAYOUT_ORDER.map(k => `<option value="${k}">${J.LAYOUTS[k].name}</option>`).join('');
+  const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
+  const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
   S.plan.lines.forEach((ln, i) => {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln';
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
+    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="txt" title="${escapeHtml(ln.text)}">${escapeHtml(ln.text)}</span>
       <div class="meta"><span class="cuts"></span>
       <span class="tools">
-        <select aria-label="レイアウト指定">${layoutOpts}</select>
+        <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
+        <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
         <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
         <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       </span></div>`;
-    li.querySelector('select').value = o.layout || '';
+    const styleSel = li.querySelector('.line-style');
+    styleSel.value = o.style || '';
     li.querySelector('.time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -362,7 +366,8 @@ function renderLines() {
       replan();
     });
     li.querySelector('.txt').addEventListener('click', () => seek(ln.start + 0.001));
-    li.querySelector('select').addEventListener('change', e => { setOv(i, { layout: e.target.value || undefined }); replan(); });
+    styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => { const cur = ov[i] || {}; setOv(i, { seed: (cur.seed | 0) + 1, lock: false }); replan(); seek(ln.start + 0.001); });
     li.querySelector('.lock').addEventListener('click', () => {
       const cur = ov[i] || {};
@@ -386,6 +391,79 @@ function setOv(i, patch) {
   for (const k of Object.keys(cur)) if (cur[k] === undefined || cur[k] === false || cur[k] === '') delete cur[k];
   if (Object.keys(cur).length) S.project.overrides[i] = cur; else delete S.project.overrides[i];
 }
+
+let layoutPreviewTimer = 0;
+function clearLayoutPreview() {
+  clearTimeout(layoutPreviewTimer);
+  if (S.layoutPreview) { S.layoutPreview = null; S.need = true; }
+}
+function previewLineLayout(i, layoutKey) {
+  const p = JSON.parse(JSON.stringify(S.project));
+  p.overrides = p.overrides || {};
+  const cur = Object.assign({}, p.overrides[i] || {});
+  if (layoutKey) cur.layout = layoutKey; else delete cur.layout;
+  if (Object.keys(cur).length) p.overrides[i] = cur; else delete p.overrides[i];
+  const plan = J.plan(p, audioLike());
+  const cut = plan.cuts.find(c => c.line === i && c.layout !== 'interlude');
+  const line = plan.lines[i];
+  const t = cut ? cut.start + Math.min(cut.dur * 0.55, Math.max(cut.inDur + 0.06, cut.dur * 0.28)) : (line ? line.start + 0.01 : S.t);
+  S.layoutPreview = { plan, t };
+  S.need = true;
+}
+function queueLayoutPreview(i, layoutKey) {
+  clearTimeout(layoutPreviewTimer);
+  layoutPreviewTimer = setTimeout(() => previewLineLayout(i, layoutKey), 35);
+}
+function closeLayoutMenu() {
+  const m = S.layoutMenu;
+  if (m) {
+    document.removeEventListener('pointerdown', m.outside, true);
+    if (m.el && m.el.parentNode) m.el.remove();
+    S.layoutMenu = null;
+  }
+  clearLayoutPreview();
+}
+function openLayoutMenu(trigger, lineIndex, currentLayout) {
+  closeLayoutMenu();
+  const menu = document.createElement('div');
+  menu.className = 'layout-menu';
+  menu.setAttribute('role', 'menu');
+  const add = (key, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.k = key;
+    if ((currentLayout || '') === key) b.classList.add('selected');
+    b.addEventListener('mouseenter', () => {
+      menu.querySelectorAll('.previewing').forEach(x => x.classList.remove('previewing'));
+      b.classList.add('previewing');
+      queueLayoutPreview(lineIndex, key);
+    });
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      setOv(lineIndex, { layout: key || undefined });
+      closeLayoutMenu();
+      replan();
+      const ln = S.plan.lines[lineIndex];
+      if (ln) seek(ln.start + 0.001);
+    });
+    menu.appendChild(b);
+  };
+  add('', '自動');
+  for (const k of J.LAYOUT_ORDER) {
+    const d = J.LAYOUTS[k];
+    if (d && !d.special) add(k, d.name);
+  }
+  menu.addEventListener('mouseleave', clearLayoutPreview);
+  document.body.appendChild(menu);
+  const r = trigger.getBoundingClientRect();
+  let left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - menu.offsetWidth - 8));
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) closeLayoutMenu(); };
+  document.addEventListener('pointerdown', outside, true);
+  S.layoutMenu = { el: menu, outside };
+}
+
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 /* ---------------- style tab ---------------- */
