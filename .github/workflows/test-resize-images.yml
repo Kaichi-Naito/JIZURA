@@ -5,6 +5,9 @@ on:
     branches:
       - resizable-panels-timeline-focus-images
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-resize-images.yml"
 
 permissions:
