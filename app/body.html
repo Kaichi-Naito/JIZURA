@@ -134,7 +134,10 @@
             <label class="field">fps<select id="eFps"><option>24</option><option>30</option><option>60</option></select></label>
             <label class="field field-wide">背景<select id="eKey"><option value="off">通常（スタイルの背景）</option><option value="green">グリーンバック（合成用）</option><option value="black">ブラックバック（合成用）</option></select></label>
           </div>
-          <div class="outbtns"><button id="eMP4" class="primary">MP4 を書き出す</button></div>
+          <div class="outbtns">
+            <button id="eMP4" class="primary">MP4 を書き出す</button>
+            <button id="eMOVA">透過MOV（アルファ）</button>
+          </div>
           <button class="terms-open linkish">書き出した動画の権利について</button>
           <div class="exp-box" hidden>
             <div class="progress"><i class="exp-bar"></i></div>
@@ -207,9 +210,11 @@
         <label class="row" style="gap:6px;margin-top:10px"><input id="outAudio" type="checkbox" checked> 曲を動画に含める</label>
         <div class="outbtns">
           <button id="btnMP4" class="primary">MP4 を書き出す</button>
+          <button id="btnMOVA" class="accent">透過MOV（アルファ付き）</button>
           <button id="btnPNG">連番PNG（ZIP）</button>
           <button id="btnPNGA">透過PNG（ZIP・背景なし）</button>
         </div>
+        <p class="note">透過MOVはPNGコーデックのロスレスRGBA動画です。背景は完全透過で、ファイルサイズはMP4より大きくなります。「曲を動画に含める」がONならPCM音声も含めます。</p>
         <div class="exp-box" hidden style="margin-top:12px">
           <div class="progress"><i class="exp-bar"></i></div>
           <div class="row" style="justify-content:space-between;margin-top:6px"><span class="exp-text muted mono">—</span><button class="exp-cancel ghost small">中止</button></div>
