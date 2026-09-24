@@ -888,17 +888,20 @@ function revealLineInList(lineIndex) {
   if (er.top < lr.top + margin) list.scrollTop -= (lr.top + margin) - er.top;
   else if (er.bottom > lr.bottom - margin) list.scrollTop += er.bottom - (lr.bottom - margin);
 }
-function timelineCutAtPointer(ev) {
+function timelineHitAtPointer(ev) {
   const tl = $('timeline'), r = tl.getBoundingClientRect();
   const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
   const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
   for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
     const h = S.timelineCutHits[i];
-    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
-      return S.plan.cuts[h.cutIndex] || null;
-    }
+    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h;
   }
   return null;
+}
+function timelineCutAtPointer(ev) {
+  const h = timelineHitAtPointer(ev);
+  if (!h) return null;
+  return S.plan.cuts.find(c => c.index === h.cutIndex) || null;
 }
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
@@ -1672,8 +1675,8 @@ function bind() {
   tl.addEventListener('pointerdown', e => {
     // Any press on a timeline item first focuses the corresponding row in
     // "行とカット". Action icons / boundary dragging can then handle the same press.
-    const pressedCut = timelineCutAtPointer(e);
-    if (pressedCut && pressedCut.line >= 0) revealLineInList(pressedCut.line);
+    const pressedHit = timelineHitAtPointer(e);
+    if (pressedHit && pressedHit.line >= 0) revealLineInList(pressedHit.line);
     const a = timelineActionAt(e);
     if (a) {
       e.preventDefault(); e.stopPropagation();
