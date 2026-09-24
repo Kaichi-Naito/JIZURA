@@ -163,10 +163,12 @@ function openAudioDb() {
   if (audioDbJob) return audioDbJob;
   audioDbJob = new Promise((resolve, reject) => {
     let req;
-    try { req = indexedDB.open(AUDIO_DB_NAME, 2); } catch (e) { reject(e); return; }
+    try { req = indexedDB.open(AUDIO_DB_NAME, 3); } catch (e) { reject(e); return; }
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+      // v2 briefly stored lyric-image assets. The feature was removed in v3.
+      if (db.objectStoreNames.contains('images')) db.deleteObjectStore('images');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
