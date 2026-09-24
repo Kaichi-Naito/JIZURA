@@ -5,6 +5,9 @@ on:
     branches:
       - export-alpha-mov
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-alpha-mov.yml"
 
 permissions:
@@ -45,6 +48,21 @@ jobs:
                   page.on("pageerror", lambda e: errors.append(str(e)))
                   await page.goto("http://127.0.0.1:8765/")
                   await page.wait_for_function("() => !!window.J && !!J.exportMOVAlpha && !!J.ui && !!J.ui.plan")
+                  # UI setting is saved in the project and mirrored between Easy/Detail controls.
+                  await page.locator("#outAlphaBg").evaluate("(el)=>{el.value='50';el.dispatchEvent(new Event('input',{bubbles:true}));}")
+                  ui_state = await page.evaluate("""() => ({
+                    value:J.ui.project.alphaBgOpacity,
+                    detail:document.querySelector('#outAlphaBg').value,
+                    easy:document.querySelector('#eAlphaBg').value,
+                    detailLabel:document.querySelector('#outAlphaBgValue').textContent,
+                    easyLabel:document.querySelector('#eAlphaBgValue').textContent
+                  })""")
+                  if abs(float(ui_state["value"])-0.5)>1e-9 or ui_state["detail"]!="50" or ui_state["easy"]!="50":
+                      raise RuntimeError(f"alpha background UI did not sync: {ui_state}")
+                  payload_bg = await page.evaluate("async () => (await J.uiApi.projectPayloadForSave()).alphaBgOpacity")
+                  if abs(float(payload_bg)-0.5)>1e-9:
+                      raise RuntimeError(f"alpha background opacity not present in saved project payload: {payload_bg}")
+
                   data = await page.evaluate(r"""
                   async () => {
                     const project = J.defaultProject();
@@ -72,30 +90,39 @@ jobs:
                       const d=buffer.getChannelData(ch);
                       for(let i=0;i<n;i++) d[i]=Math.sin(2*Math.PI*440*i/sr)*0.1;
                     }
-                    const result=await J.exportMOVAlpha({
-                      plan, project, audio:{buffer},
-                      onProgress:()=>{}
-                    });
-                    const bytes=new Uint8Array(await result.blob.arrayBuffer());
-                    let binary='';
-                    const chunk=0x8000;
-                    for(let i=0;i<bytes.length;i+=chunk) binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
-                    return {
-                      b64:btoa(binary),
-                      size:bytes.length,
-                      type:result.blob.type,
-                      codec:result.codec,
-                      audio:result.audio
+                    const encode = async opacity => {
+                      project.alphaBgOpacity=opacity;
+                      const result=await J.exportMOVAlpha({
+                        plan, project, audio:{buffer},
+                        onProgress:()=>{}
+                      });
+                      const bytes=new Uint8Array(await result.blob.arrayBuffer());
+                      let binary='';
+                      const chunk=0x8000;
+                      for(let i=0;i<bytes.length;i+=chunk) binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+                      return {
+                        b64:btoa(binary),
+                        size:bytes.length,
+                        type:result.blob.type,
+                        codec:result.codec,
+                        audio:result.audio,
+                        backgroundOpacity:result.backgroundOpacity
+                      };
                     };
+                    return {zero:await encode(0), half:await encode(0.5)};
                   }
                   """)
                   if errors:
                       raise RuntimeError("page errors: "+" | ".join(errors))
-                  if data["type"] != "video/quicktime" or data["codec"] != "PNG + Alpha" or data["audio"] != "PCM":
-                      raise RuntimeError(f"unexpected export metadata: {data}")
-                  with open("/tmp/jizura-alpha.mov","wb") as f:
-                      f.write(base64.b64decode(data["b64"]))
-                  print({"size":data["size"],"type":data["type"],"codec":data["codec"],"audio":data["audio"]})
+                  for name, expected in (("zero",0),("half",0.5)):
+                      item=data[name]
+                      if item["type"] != "video/quicktime" or item["codec"] != "PNG + Alpha" or item["audio"] != "PCM":
+                          raise RuntimeError(f"unexpected export metadata for {name}: {item}")
+                      if abs(float(item["backgroundOpacity"])-expected)>1e-9:
+                          raise RuntimeError(f"wrong background opacity metadata for {name}: {item}")
+                      with open(f"/tmp/jizura-alpha-{name}.mov","wb") as fp:
+                          fp.write(base64.b64decode(item["b64"]))
+                  print({"ui":ui_state,"zeroSize":data["zero"]["size"],"halfSize":data["half"]["size"]})
                   await browser.close()
 
           asyncio.run(main())
@@ -104,10 +131,10 @@ jobs:
       - name: Validate MOV container, alpha and audio
         shell: bash
         run: |
-          ffprobe -v error -show_entries stream=index,codec_name,codec_type,pix_fmt,sample_rate,channels -of json /tmp/jizura-alpha.mov > /tmp/probe.json
+          ffprobe -v error -show_entries stream=index,codec_name,codec_type,pix_fmt,sample_rate,channels -of json /tmp/jizura-alpha-zero.mov > /tmp/probe.json
           cat /tmp/probe.json
           python3 - <<'PY'
-          import json, subprocess, os
+          import json, subprocess
           p=json.load(open("/tmp/probe.json"))
           streams=p["streams"]
           video=next((s for s in streams if s.get("codec_type")=="video"),None)
@@ -120,17 +147,24 @@ jobs:
           assert audio.get("sample_rate")=="48000", audio
           assert int(audio.get("channels",0))==2, audio
 
-          subprocess.run([
-              "ffmpeg","-v","error","-y","-i","/tmp/jizura-alpha.mov",
-              "-frames:v","1","-f","rawvideo","-pix_fmt","rgba","/tmp/frame.rgba"
-          ],check=True)
-          raw=open("/tmp/frame.rgba","rb").read()
-          assert raw and len(raw)%4==0
-          alpha=raw[3::4]
-          amin,amax=min(alpha),max(alpha)
-          assert amin==0, (amin,amax)
-          assert amax>0, (amin,amax)
-          print({"video":video,"audio":audio,"alpha_min":amin,"alpha_max":amax,"raw_bytes":len(raw)})
+          def alpha_range(src, out):
+              subprocess.run([
+                  "ffmpeg","-v","error","-y","-i",src,
+                  "-frames:v","1","-f","rawvideo","-pix_fmt","rgba",out
+              ],check=True)
+              raw=open(out,"rb").read()
+              assert raw and len(raw)%4==0
+              a=raw[3::4]
+              return min(a),max(a)
+
+          zmin,zmax=alpha_range("/tmp/jizura-alpha-zero.mov","/tmp/zero.rgba")
+          hmin,hmax=alpha_range("/tmp/jizura-alpha-half.mov","/tmp/half.rgba")
+          assert zmin==0 and zmax>0, (zmin,zmax)
+          # 50% opaque background should cover every pixel at about half alpha,
+          # while foreground text/effects can still reach full opacity.
+          assert 126 <= hmin <= 129, (hmin,hmax)
+          assert hmax==255, (hmin,hmax)
+          print({"video":video,"audio":audio,"alpha_zero":[zmin,zmax],"alpha_half":[hmin,hmax]})
           PY
 
       - name: Commit generated index
