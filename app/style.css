@@ -133,6 +133,7 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .txt { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
 .ln .txt:hover { border-color: var(--line2); }
 .ln .txt:focus { background: var(--ink); border-color: var(--amber); }
+.ln .txt.image-line { color: var(--cyan); cursor: default; border-color: rgba(22,244,212,0.25); }
 .ln > button.icon { width: 26px; height: 26px; padding: 3px 4px; }
 .ln .meta {
   grid-column: 2 / 8;
