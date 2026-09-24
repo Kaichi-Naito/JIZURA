@@ -97,7 +97,7 @@ jobs:
                 J.ui.project.lyrics=[img,...Array.from({length:30},(_,i)=>'TXT '+i)].join(String.fromCharCode(10));
                 J.ui.project.timing.lineTimes=Object.fromEntries(Array.from({length:31},(_,i)=>[i,i*2]));
                 J.uiApi.replan();
-                J.ui.timelineZoom=1; J.ui.timelineStart=0; J.ui.need=true;
+                J.ui.timelineZoom=8; J.ui.timelineStart=0; J.ui.need=true;
               }""")
               await page.wait_for_timeout(180)
               await page.locator("#lineList").evaluate("el=>el.scrollTop=el.scrollHeight")
