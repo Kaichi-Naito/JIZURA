@@ -754,11 +754,25 @@ function timelineWheel(ev) {
 
 /* ---------------- cut info ---------------- */
 let lastCutIdx = -2;
+function revealLineInList(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const margin = 8;
+  const top = lr.top + margin, bottom = lr.bottom - margin;
+  if (er.top < top) list.scrollTop -= top - er.top;
+  else if (er.bottom > bottom) list.scrollTop += er.bottom - bottom;
+}
 function updateCutInfo() {
   const cut = J.cutAt(S.plan, S.t);
   const idx = cut ? cut.index : -1;
   const li = cut ? cut.line : -1;
-  if (li !== S.curLine) { S.lineEls.forEach((el, i) => el.classList.toggle('cur', i === li)); S.curLine = li; }
+  if (li !== S.curLine) {
+    S.lineEls.forEach((el, i) => el.classList.toggle('cur', i === li));
+    S.curLine = li;
+    revealLineInList(li);
+  }
   if (idx === lastCutIdx) return;
   lastCutIdx = idx;
   const el = $('cutInfo');
