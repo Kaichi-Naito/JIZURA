@@ -26,7 +26,7 @@ J.defaultProject = () => ({
   overrides: {},
   colors: { enabled: false },
   fonts: {},
-  ui: { lineSortByTime: false },
+  ui: { lineSortByTime: false, lyricsHeight: null },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -40,16 +40,18 @@ J.stepDur = (fx, fps) => { const k = J.komaOf(fx); return k > 0 ? 1 / k : 1 / (f
 J.parseLyrics = (raw) => {
   const lines = []; const meta = {};
   let pendingGap = false;
-  for (let src of String(raw || '').replace(/\r/g, '').split('\n')) {
+  const sourceLines = String(raw || '').replace(/\r/g, '').split('\n');
+  sourceLines.forEach((src, sourceIndex) => {
     const s0 = src.trim();
-    if (!s0) { if (lines.length) pendingGap = true; continue; }
-    if (s0.startsWith('#')) continue;
+    if (!s0) { if (lines.length) pendingGap = true; return; }
+    if (s0.startsWith('#')) return;
     const mm = s0.match(/^\[(ti|ar|al|by|offset):(.*)\]$/i);
-    if (mm) { meta[mm[1].toLowerCase()] = mm[2].trim(); continue; }
+    if (mm) { meta[mm[1].toLowerCase()] = mm[2].trim(); return; }
     let s = s0; const times = [];
     let m;
     while ((m = s.match(/^\[(\d+):(\d+(?:[.:]\d+)?)\]/))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); s = s.slice(m[0].length); }
     s = s.trim();
+    const sourceBody = s;
     let note = null;
     const bar = s.indexOf('|');
     if (bar >= 0) { note = s.slice(bar + 1).trim() || null; s = s.slice(0, bar).trim(); }
@@ -63,12 +65,12 @@ J.parseLyrics = (raw) => {
       const latin = manual.some(x => /[A-Za-z]/.test(x));
       s = manual.join(latin ? ' ' : '');
     }
-    if (!s) continue;
-    const base = { text: s, note, impact, emph, manual, gapBefore: pendingGap };
+    if (!s) return;
+    const base = { text: s, note, impact, emph, manual, gapBefore: pendingGap, sourceIndex, sourceBody };
     pendingGap = false;
     if (times.length) times.forEach(t => lines.push(Object.assign({}, base, { lrc: t })));
     else lines.push(Object.assign({}, base, { lrc: null }));
-  }
+  });
   if (lines.some(l => l.lrc != null)) lines.sort((a, b) => (a.lrc ?? 1e9) - (b.lrc ?? 1e9));
   return { lines, meta };
 };
