@@ -1727,6 +1727,14 @@ function bind() {
     }
     drag = false;
   });
+  // Pointerdown handles seeking/boundaries/actions. A normal click additionally
+  // confirms line-list navigation so the jump is not lost to canvas hit-priority.
+  tl.addEventListener('click', e => {
+    const a = timelineActionAt(e);
+    if (a && a.line >= 0) { revealLineInList(a.line); return; }
+    const cut = timelineCutAtPointer(e);
+    if (cut && cut.line >= 0) revealLineInList(cut.line);
+  });
   tl.addEventListener('pointercancel', () => { drag = false; finishBoundaryDrag(); });
   tl.addEventListener('pointerleave', () => {
     if (!drag && !S.timelineBoundaryDrag && (S.timelineBoundaryHover || S.timelineActionHover)) {
