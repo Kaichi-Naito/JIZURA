@@ -1,0 +1,163 @@
+name: Test compact line list and timeline follow
+
+on:
+  push:
+    branches:
+      - compact-lines-follow-timeline
+    paths:
+      - ".github/workflows/test-compact-lines-timeline.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run UI regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width":1440,"height":900})
+                  errors=[]
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#lineList .ln")
+
+                  # Build a long project so both list and timeline have enough content.
+                  lyrics="\n".join([f"LINE {i:02d} TEST TEXT" for i in range(1,36)])
+                  await page.fill("#lyrics", lyrics)
+                  await page.wait_for_timeout(500)
+                  await page.evaluate("""() => {
+                    const t={};
+                    for(let i=0;i<35;i++) t[i]=i*2.0;
+                    J.ui.project.timing.lineTimes=t;
+                    J.ui.project.timing.snap=false;
+                    J.ui.project.fx.density=.35;
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(300)
+
+                  # 1) Each line item should stay compact (roughly two rows, not 3-4 stacked rows).
+                  dims = await page.locator("#lineList .ln").evaluate_all("""els => els.slice(0,8).map(el => {
+                    const meta=el.querySelector('.meta').getBoundingClientRect();
+                    const dice=el.querySelector('.dice').getBoundingClientRect();
+                    const lock=el.querySelector('.lock').getBoundingClientRect();
+                    return {height:el.getBoundingClientRect().height, metaH:meta.height, diceTop:dice.top, lockTop:lock.top};
+                  })""")
+                  if not dims or max(x["height"] for x in dims) > 66:
+                      raise RuntimeError(f"line items are still too tall: {dims}")
+                  if any(abs(x["diceTop"]-x["lockTop"])>1 for x in dims):
+                      raise RuntimeError(f"dice/lock are not packed on the same row: {dims}")
+
+                  # 2) Seeking/current-line highlight must not change the user's line-list scroll position.
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=Math.min(350, el.scrollHeight-el.clientHeight)")
+                  scroll_before = await page.locator("#lineList").evaluate("el=>el.scrollTop")
+                  await page.evaluate("J.uiApi.seek(58.01)")
+                  await page.wait_for_timeout(180)
+                  scroll_after = await page.locator("#lineList").evaluate("el=>el.scrollTop")
+                  current = await page.evaluate("J.ui.lineEls[29] && J.ui.lineEls[29].classList.contains('cur')")
+                  if abs(scroll_after-scroll_before)>1:
+                      raise RuntimeError(f"line list still auto-scrolls with playback position: {scroll_before}->{scroll_after}")
+                  if not current:
+                      raise RuntimeError("current-line highlight no longer updates")
+
+                  # 3) Zoomed timeline follows the playhead after it leaves the visible time window.
+                  follow = await page.evaluate("""() => {
+                    J.ui.timelineZoom=4;
+                    J.ui.timelineStart=0;
+                    const D=J.ui.plan.duration;
+                    const span=D/4;
+                    J.ui.t=span+0.75;
+                    const before=J.ui.timelineStart;
+                    const moved=J.uiApi.followTimelinePlayhead();
+                    const after=J.ui.timelineStart;
+                    const end=after+span;
+                    return {D,span,before,after,end,t:J.ui.t,moved};
+                  }""")
+                  if not follow["moved"] or follow["after"] <= follow["before"] or not (follow["after"] <= follow["t"] <= follow["end"]):
+                      raise RuntimeError(f"timeline did not follow out-of-view playhead: {follow}")
+
+                  # 4) Wide timeline items expose clickable dice/lock controls.
+                  await page.evaluate("""() => {
+                    J.ui.timelineZoom=12;
+                    J.ui.timelineStart=0;
+                    J.ui.t=.1;
+                    J.ui.need=true;
+                  }""")
+                  await page.wait_for_timeout(180)
+                  hits = await page.evaluate("""() => J.ui.timelineActionHits.map(h => ({
+                    x:h.x,y:h.y,w:h.w,h:h.h,action:h.action,line:h.line,cutIndex:h.cutIndex
+                  }))""")
+                  dice = next((h for h in hits if h["action"]=="dice"),None)
+                  lock = next((h for h in hits if h["action"]=="lock" and (dice is None or h["line"]==dice["line"])),None)
+                  if not dice or not lock:
+                      raise RuntimeError(f"timeline action icons were not produced for wide items: {hits[:10]}")
+
+                  tl = await page.locator("#timeline").bounding_box()
+                  canvas_size = await page.locator("#timeline").evaluate("el=>({w:el.width,h:el.height})")
+                  def client_point(hit):
+                      return (
+                          tl["x"] + (hit["x"]+hit["w"]/2)/canvas_size["w"]*tl["width"],
+                          tl["y"] + (hit["y"]+hit["h"]/2)/canvas_size["h"]*tl["height"]
+                      )
+
+                  line=dice["line"]
+                  seed_before=await page.evaluate("i => ((J.ui.project.overrides[i]||{}).seed||0)", line)
+                  x,y=client_point(dice)
+                  await page.mouse.click(x,y)
+                  await page.wait_for_timeout(250)
+                  seed_after=await page.evaluate("i => ((J.ui.project.overrides[i]||{}).seed||0)", line)
+                  if seed_after != seed_before+1:
+                      raise RuntimeError(f"timeline dice did not reroll line {line}: {seed_before}->{seed_after}")
+
+                  # Re-find lock hit after replan/redraw.
+                  await page.evaluate("""() => { J.ui.timelineZoom=12; J.ui.timelineStart=0; J.ui.need=true; }""")
+                  await page.wait_for_timeout(180)
+                  hits2=await page.evaluate("() => J.ui.timelineActionHits.map(h=>({x:h.x,y:h.y,w:h.w,h:h.h,action:h.action,line:h.line,cutIndex:h.cutIndex}))")
+                  lock2=next((h for h in hits2 if h["action"]=="lock" and h["line"]==line),None)
+                  if not lock2:
+                      raise RuntimeError(f"lock hit disappeared after reroll: {hits2[:10]}")
+                  x,y=client_point(lock2)
+                  await page.mouse.click(x,y)
+                  await page.wait_for_timeout(250)
+                  locked=await page.evaluate("i => !!((J.ui.project.overrides[i]||{}).lock)", line)
+                  if not locked:
+                      raise RuntimeError(f"timeline lock did not lock line {line}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"itemHeights":dims,"lineScroll":[scroll_before,scroll_after],"follow":follow,"timelineHitCount":len(hits),"line":line,"seed":[seed_before,seed_after],"locked":locked})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
