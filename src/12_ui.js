@@ -1553,8 +1553,10 @@ function bindWorkspaceSplitters() {
     });
   }
   if (stage) {
-    stage.addEventListener('mousedown', e => {
+    document.addEventListener('mousedown', e => {
       if (window.innerWidth <= 760 || e.button !== 0) return;
+      const sr = stage.getBoundingClientRect();
+      if (e.clientX < sr.left - 2 || e.clientX > sr.right + 2 || e.clientY < sr.top - 5 || e.clientY > sr.bottom + 5) return;
       e.preventDefault();
       stage.classList.add('dragging');
       const dock = $('timelineDock');
