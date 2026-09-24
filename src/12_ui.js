@@ -652,8 +652,7 @@ function drawTimeline() {
     if (bt >= V.start && bt <= V.end) {
       const bx = X(bt);
       x.fillStyle = S.timelineBoundaryDrag ? '#f5a50c' : 'rgba(245,165,12,0.78)';
-      x.fillRect(Math.round(bx) - Math.max(1, dpr), top - 3 * dpr, Math.max(2, 2 * dpr), bot - top + 6 * dpr);
-      x.fillRect(Math.round(bx) - 4 * dpr, top - 6 * dpr, 8 * dpr, 4 * dpr);
+      x.fillRect(Math.round(bx) - Math.max(1, dpr), top, Math.max(2, 2 * dpr), bot - top);
     }
   }
   if (S.t >= V.start && S.t <= V.end) {
@@ -670,10 +669,11 @@ function drawTimeline() {
 }
 function timelineEditableBoundaries() {
   ensureLineCutOrdinals(S.plan);
-  const cuts = (S.plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).slice().sort((a, b) => a.start - b.start);
+  const cuts = (S.plan.cuts || []).slice().sort((a, b) => a.start - b.start);
   const out = [];
   for (let i = 1; i < cuts.length; i++) {
     const left = cuts[i - 1], right = cuts[i];
+    // A draggable "boundary" exists only when the two timeline items actually touch.
     if (Math.abs(left.end - right.start) > 0.07) continue;
     if (right.end - left.start < 0.14) continue;
     const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
@@ -683,6 +683,11 @@ function timelineEditableBoundaries() {
 }
 function timelineBoundaryAt(ev, radius = 7) {
   const tl = $('timeline'), r = tl.getBoundingClientRect(), V = timelineView();
+  // The upper 30% is the line-number/seek area. Boundary dragging is deliberately
+  // disabled there so clicking/dragging it always seeks playback.
+  const bandTop = r.top + r.height * 0.30;
+  const bandBottom = r.bottom - 8;
+  if (ev.clientY < bandTop || ev.clientY > bandBottom) return null;
   let best = null, bestPx = radius + 1;
   for (const b of timelineEditableBoundaries()) {
     if (b.right.start < V.start || b.right.start > V.end) continue;
@@ -708,7 +713,8 @@ function updateBoundaryDrag(ev) {
   const t = +result.time.toFixed(4);
   if (!S.project.timing.cutBoundaries) S.project.timing.cutBoundaries = {};
   S.project.timing.cutBoundaries[d.boundary.key] = t;
-  if (d.boundary.left.line !== d.boundary.right.line && d.boundary.right.lineCut === 0) {
+  if (d.boundary.right.line >= 0 && d.boundary.right.lineCut === 0 &&
+      (d.boundary.left.line !== d.boundary.right.line || d.boundary.left.layout === 'title' || d.boundary.left.layout === 'interlude')) {
     if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
     S.project.timing.lineTimes[d.boundary.right.line] = t;
   }
