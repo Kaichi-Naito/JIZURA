@@ -151,9 +151,9 @@ jobs:
                   }""")
                   if not hit:
                       raise RuntimeError("line 22 has no rendered timeline hit rectangle")
-                  x=tl["x"] + (hit["x"]+hit["w"]*.5)/canvas_size["w"]*tl["width"]
-                  y=tl["y"] + (hit["y"]+min(hit["h"]*.22,8))/canvas_size["h"]*tl["height"]
-                  await page.mouse.click(x,y)
+                  rel_x=(hit["x"]+hit["w"]*.5)/canvas_size["w"]*tl["width"]
+                  rel_y=(hit["y"]+min(hit["h"]*.22,8))/canvas_size["h"]*tl["height"]
+                  await page.locator("#timeline").click(position={"x":rel_x,"y":rel_y})
                   await page.wait_for_timeout(150)
                   jump=await page.evaluate("""() => {
                     const list=document.querySelector('#lineList'), el=J.ui.lineEls[22];
