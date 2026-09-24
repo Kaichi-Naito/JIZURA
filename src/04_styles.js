@@ -184,18 +184,34 @@ J.resolveStyle = (project) => {
    The global style (plus the project's explicit colour overrides) is therefore always the palette source. */
 J.resolveLineStyle = (project, styleKey) => {
   if (!styleKey || styleKey === project.style || !J.STYLES[styleKey]) return J.resolveStyle(project);
+
+  // Keep the selected line style intact (fonts, texture, HUD, glow, biases,
+  // decor/background/camera/fx tendencies, number of schemes, etc.).
+  // Only the actual colours come from the project-wide palette.
   const local = JSON.parse(JSON.stringify(J.STYLES[styleKey]));
   const palette = J.resolveStyle(project);
-  local.schemes = palette.schemes.map(s => {
-    const o = JSON.parse(JSON.stringify(s));
-    if (local.useGrad && !o.grad) o.grad = [o.accent || o.fg, o.accent2 || o.fg];
-    return o;
+  const colourKeys = ['bg', 'fg', 'sub', 'accent', 'accent2', 'ink', 'dim', 'ghostA', 'ghostB'];
+
+  local.schemes = (local.schemes || [{}]).map((localScheme, i) => {
+    const paletteScheme = palette.schemes[i % Math.max(1, palette.schemes.length)] || palette.schemes[0] || {};
+    const out = JSON.parse(JSON.stringify(localScheme || {}));
+
+    // Remove local colour-bearing gradient data before applying the global palette.
+    delete out.grad;
+    for (const k of colourKeys) if (paletteScheme[k] != null) out[k] = paletteScheme[k];
+
+    // Preserve non-colour scheme semantics from the selected style (paper/swap/etc).
+    // Gradient styles still get a gradient, but derive it from the global colours.
+    if (local.useGrad) {
+      out.grad = paletteScheme.grad
+        ? JSON.parse(JSON.stringify(paletteScheme.grad))
+        : [out.accent || out.fg, out.accent2 || out.fg];
+    }
+    return out;
   });
+
   applyProjectFonts(local, project);
-  if (J.keyMode(project)) {
-    local.texture = { grain: 0, paper: 0, scan: 0 };
-    local.key = true;
-  }
+  if (J.keyMode(project)) keyStyle(local);
   return local;
 };
 /* ---- 合成用の背景（グリーンバック / ブラックバック） ----
