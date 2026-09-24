@@ -1744,6 +1744,15 @@ function bind() {
       S.timelineBoundaryHover = null; S.timelineActionHover = null; tl.style.cursor = 'pointer'; drawTimeline();
     }
   });
+  tl.addEventListener('click', e => {
+    // Explicit click navigation: clicking a visible timeline item scrolls only
+    // the "行とカット" list to that item's lyric row.
+    const r = tl.getBoundingClientRect();
+    const inCutBand = e.clientY >= r.top + r.height * 0.30 && e.clientY <= r.bottom - 8;
+    if (!inCutBand) return;
+    const cut = J.cutAt(S.plan, timelineTimeAt(e));
+    if (cut && cut.line >= 0) revealLineInList(cut.line);
+  });
   tl.addEventListener('wheel', timelineWheel, { passive: false });
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
