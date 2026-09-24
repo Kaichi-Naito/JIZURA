@@ -118,8 +118,8 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 }
 .ln {
   display: grid;
-  grid-template-columns: 18px 58px minmax(0, 1fr) 26px 26px;
-  gap: 3px 4px;
+  grid-template-columns: 18px 52px 8px 52px minmax(0, 1fr) 26px 26px;
+  gap: 3px 3px;
   align-items: center;
   padding: 3px 4px;
   border: 1px solid transparent;
@@ -128,13 +128,15 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln:hover { background: var(--raised); }
 .ln.cur { border-color: var(--line2); background: var(--raised); }
 .ln .no { font: 500 10px var(--mono); color: var(--faint); text-align: right; }
-.ln .time { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 11px; }
+.ln .time { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 10px; }
+.ln .time-arrow { font-size: 9px; color: var(--faint); text-align: center; line-height: 1; }
+.ln .end-time:not([style*="border-color"]) { color: var(--muted); }
 .ln .txt { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
 .ln .txt:hover { border-color: var(--line2); }
 .ln .txt:focus { background: var(--ink); border-color: var(--amber); }
 .ln > button.icon { width: 26px; height: 26px; padding: 3px 4px; }
 .ln .meta {
-  grid-column: 2 / 6;
+  grid-column: 2 / 8;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -2994,7 +2996,7 @@ J.defaultProject = () => ({
   aspect: '16:9', res: 1080, fps: 24,
   fx: { motion: 0.7, glitch: 0.55, chroma: 0.7, decor: 0.5, density: 0.55, texture: 0.6, flash: true, onTwos: true, koma: 12, hud: 'auto', bgSwitch: 0.35 },
   enabled: Object.fromEntries(J.GROUP_KEYS.map(g => [g, Object.fromEntries(J.order(g).map(k => [k, true]))])),
-  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, cutBoundaries: {}, lineScale: 1 },
+  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, lineEnds: {}, cutBoundaries: {}, lineScale: 1 },
   overrides: {},
   colors: { enabled: false },
   fonts: {},
@@ -3126,14 +3128,17 @@ J.computeTiming = (project, parsed, audio) => {
     starts.push(s);
   });
   const ends = starts.map((s, i) => {
+    const man = T.lineEnds && T.lineEnds[i] != null ? +T.lineEnds[i] : null;
+    if (man != null && isFinite(man)) return Math.max(s + 0.05, man);
     if (i < starts.length - 1) return Math.max(s + 0.35, starts[i + 1]);
     const n = [...lines[i].text].length;
     let d = J.clamp(0.8 + n * 0.17, 1.5, 5.2) * (T.lineScale || 1);
     if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
     return s + d;
   });
-  let duration = (ends.length ? ends[ends.length - 1] : 3) + (T.tail ?? 0.9);
-  if (audio && audio.duration && T.useAudioLength !== false) duration = Math.max(audio.duration, ends.length ? ends[ends.length - 1] + 0.2 : 1);
+  const maxEnd = ends.length ? Math.max(...ends) : 3;
+  let duration = maxEnd + (T.tail ?? 0.9);
+  if (audio && audio.duration && T.useAudioLength !== false) duration = Math.max(audio.duration, maxEnd + 0.2);
   return { starts, ends, duration };
 };
 
@@ -3179,6 +3184,7 @@ J.plan = (project, audio) => {
 
   parsed.lines.forEach((ln, li) => {
     const s = tm.starts[li], e = tm.ends[li];
+    const manualEnd = !!(project.timing && project.timing.lineEnds && project.timing.lineEnds[li] != null && isFinite(+project.timing.lineEnds[li]));
     const ov = (project.overrides || {})[li] || {};
     const lineStyleKey = ov.style && J.STYLES[ov.style] ? ov.style : project.style;
     const lineSt = J.resolveLineStyle ? J.resolveLineStyle(project, lineStyleKey) : st;
@@ -3192,9 +3198,9 @@ J.plan = (project, audio) => {
     const history = [], bgHistory = [], fxHistory = [];
     let schemeIdx = 0;
     const n = [...ln.text.replace(/\s+/g, '')].length;
-    const visEnd = Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
-    const D = visEnd - s;
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
+    const D = Math.max(0.05, visEnd - s);
+    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
@@ -3267,7 +3273,7 @@ J.plan = (project, audio) => {
           if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
-      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, lineCut: k, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
+      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, lineCut: k, start: cs, end: ce, manualEnd, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: bg === lineBg ? lineBgP : {}, cam, camP, trans, transP, transDur });
       plan.cuts.push(cut);
       history.push({ layout, enter, exit, hold, treat, cam, trans, decor: decor.map(d => d.id) });
@@ -3655,10 +3661,20 @@ const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Mat
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
-  if (ans < 0) return null;
-  const c = cs[ans];
-  return t < c.end ? c : null;
+  // Manual end times can create overlap between lyric lines. The later-started
+  // lyric line owns the foreground; within that line, use its latest active cut.
+  let best = null, bestLineStart = -Infinity, bestCutStart = -Infinity;
+  for (let i = 0; i <= ans; i++) {
+    const cut = cs[i];
+    if (!(cut.start <= t && t < cut.end)) continue;
+    const lineStart = cut.line >= 0 && plan.lines && plan.lines[cut.line] ? plan.lines[cut.line].start : cut.start;
+    if (lineStart > bestLineStart + 1e-9 || (Math.abs(lineStart - bestLineStart) <= 1e-9 && cut.start > bestCutStart)) {
+      best = cut; bestLineStart = lineStart; bestCutStart = cut.start;
+    }
+  }
+  return best;
 };
+J.cutsAt = (plan, t) => (plan.cuts || []).filter(c => c.start <= t && t < c.end);
 
 class Renderer {
   constructor() {
@@ -3709,7 +3725,7 @@ class Renderer {
     const stepDur = J.stepDur(fx, fps);
     const clock = J.komaOf(fx) > 0 ? stepDur : 1 / 24;
     const tq = Math.floor(t / stepDur + 1e-6) * stepDur;
-    const mainCut = J.cutAt(plan, tq);
+    const mainCut = opt.forceCut || J.cutAt(plan, tq);
     const st = styleFor(mainCut);
     const sc = st.schemes[mainCut ? mainCut.scheme % st.schemes.length : 0] || st.schemes[0];
     const allowFilter = this.filterOK && !opt.fast;
@@ -3763,6 +3779,27 @@ class Renderer {
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
     }
     if (opt.backgroundOnly) { ctx.restore(); return; }
+
+    // When a line has an explicit end beyond the next line's start, keep the
+    // manually extended line visible underneath later items for the overlap.
+    if (!opt.noOverlap && !opt.forceCut && mainCut && J.cutsAt) {
+      const overlaps = J.cutsAt(plan, tq).filter(c => c !== mainCut && c.manualEnd && c.line >= 0 && c.line !== mainCut.line);
+      if (overlaps.length) {
+        const O = this.ensure(this.overlapLayer || (this.overlapLayer = mk(2, 2)), cw, ch);
+        const ox = O.getContext('2d');
+        this.overlapRenderer = this.overlapRenderer || new Renderer();
+        for (const oc of overlaps) {
+          this.overlapRenderer.frame(ox, plan, tq, {
+            scale, transparent: true, forceCut: oc, noOverlap: true,
+            noTrans: true, noPost: true, noHud: true, fast: opt.fast
+          });
+          ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+          ctx.drawImage(O, 0, 0); ctx.restore();
+        }
+      }
+    }
+
     const shx = J.rs(step, 71) * shake * 16 * u, shy = J.rs(step, 72) * shake * 11 * u;
     // ---------- content passes ----------
     const passes = [
@@ -3790,7 +3827,7 @@ class Renderer {
     for (const P of passes) {
       if (P.pass !== 'main' && !ghostOn) continue;
       const tp = Math.max(0, tq - P.lag);
-      const cut = P.lag ? J.cutAt(plan, tp) : mainCut;
+      const cut = opt.forceCut ? mainCut : (P.lag ? J.cutAt(plan, tp) : mainCut);
       if (!cut) continue;
       const cst = styleFor(cut);
       const csc = cst.schemes[cut.scheme % cst.schemes.length] || cst.schemes[0];
@@ -29466,6 +29503,7 @@ function remapLineIndexedState(oldRaw, newRaw) {
     return out;
   };
   S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  S.project.timing.lineEnds = remap((S.project.timing || {}).lineEnds || {});
   const oldToNew = {};
   for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
   const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
@@ -29963,6 +30001,18 @@ function replaceLyricLineFromList(lineIndex, newBody) {
   replan();
   return true;
 }
+function clearLineEndBoundaryOverrides(lineIndex) {
+  const map = S.project.timing && S.project.timing.cutBoundaries;
+  if (!map || !S.plan) return;
+  const cuts = (S.plan.cuts || []).slice().sort((a, b) => a.start - b.start);
+  for (let j = 1; j < cuts.length; j++) {
+    const left = cuts[j - 1], right = cuts[j];
+    if (left.line !== lineIndex) continue;
+    if (right.line === lineIndex && right.layout !== 'interlude' && left.layout !== 'interlude') continue;
+    const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
+    if (key) delete map[key];
+  }
+}
 function rerollLine(lineIndex) {
   const line = S.plan.lines[lineIndex]; if (!line) return;
   const cur = (S.project.overrides || {})[lineIndex] || {};
@@ -29994,11 +30044,14 @@ function renderLines() {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
+    const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
     const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
     const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
-      <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
+      <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
+      <span class="time-arrow" aria-hidden="true">→</span>
+      <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
       <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
@@ -30011,10 +30064,23 @@ function renderLines() {
       </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
-    li.querySelector('.time').addEventListener('change', e => {
+    li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
-      if (isFinite(v)) S.project.timing.lineTimes[i] = Math.max(0, v); else delete S.project.timing.lineTimes[i];
+      if (!S.project.timing.lineEnds) S.project.timing.lineEnds = {};
+      if (isFinite(v)) {
+        const s2 = Math.max(0, v);
+        S.project.timing.lineTimes[i] = s2;
+        if (S.project.timing.lineEnds[i] != null && +S.project.timing.lineEnds[i] <= s2) S.project.timing.lineEnds[i] = +(s2 + 0.05).toFixed(3);
+      } else delete S.project.timing.lineTimes[i];
+      replan();
+    });
+    li.querySelector('.end-time').addEventListener('change', e => {
+      if (!S.project.timing.lineEnds) S.project.timing.lineEnds = {};
+      clearLineEndBoundaryOverrides(i);
+      const raw = e.target.value.trim(), v = parseFloat(raw);
+      if (!raw || !isFinite(v)) delete S.project.timing.lineEnds[i];
+      else S.project.timing.lineEnds[i] = +Math.max(ln.start + 0.05, v).toFixed(3);
       replan();
     });
     const txtEdit = li.querySelector('.txt-edit');
@@ -30494,7 +30560,12 @@ function bind() {
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
-  $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
+  $('btnResetTimes').addEventListener('click', () => {
+    S.project.timing.lineTimes = {};
+    S.project.timing.lineEnds = {};
+    S.project.timing.cutBoundaries = {};
+    replan();
+  });
   $('btnSortLines').addEventListener('click', () => {
     S.lineSortByTime = !S.lineSortByTime;
     S.project.ui = Object.assign({}, S.project.ui || {}, { lineSortByTime: S.lineSortByTime });
