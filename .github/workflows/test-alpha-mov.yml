@@ -58,8 +58,12 @@ jobs:
                     project.timing.snap = false;
                     const plan = J.plan(project, null);
                     plan.duration = 0.125;
+                    plan.events = [];
+                    plan.fx.hud = 'off';
+                    plan.fx.chroma = 0;
                     for (const c of plan.cuts) {
                       c.enter='cut'; c.exit='cut'; c.hold='still'; c.inDur=0; c.outDur=0;
+                      c.decor=[]; c.bg='none'; c.treat='none'; c.cam='push'; c.trans=null;
                     }
 
                     const sr=48000, n=Math.ceil(plan.duration*sr);
