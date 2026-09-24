@@ -75,7 +75,7 @@ h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 1
 .sec { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .line-list-head-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
-#lyrics { min-height: 150px; font-size: 14px; }
+#lyrics { min-height: 150px; font-size: 14px; resize: vertical; }
 .syntax { font-size: 12px; color: var(--muted); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; }
 .syntax code { font-family: var(--mono); color: var(--amber); }
 .syntax ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
@@ -105,7 +105,9 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln.cur { border-color: var(--line2); background: var(--raised); }
 .ln .no { font: 500 11px var(--mono); color: var(--faint); text-align: right; }
 .ln .time { width: 100%; padding: 3px 5px; font-size: 12px; }
-.ln .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ln .txt { width: 100%; min-width: 0; padding: 3px 5px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
+.ln .txt:hover { border-color: var(--line2); }
+.ln .txt:focus { background: var(--ink); border-color: var(--amber); }
 .ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
 .ln .tools { display: flex; gap: 4px; flex: none; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; max-width: 100%; }
 .ln .tools select, .ln .layout-trigger { padding: 2px 4px; font-size: 11px; max-width: 92px; min-width: 0; }
