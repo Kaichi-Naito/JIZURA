@@ -134,16 +134,25 @@ jobs:
                   }""")
                   await page.wait_for_timeout(180)
                   await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
-                  tl=await page.locator("#timeline").bounding_box()
-                  view=await page.evaluate("""() => {
-                    const D=J.ui.plan.duration, span=D/J.ui.timelineZoom;
+                  # Center the timeline view on line 22, then click the actual rendered
+                  # cut rectangle rather than reconstructing its pixel position.
+                  await page.evaluate("""() => {
                     const target=J.ui.plan.cuts.find(c=>c.line===22 && c.layout!=='interlude');
-                    return {D,span,start:J.ui.timelineStart,targetTime:(target.start+Math.min(target.end,target.start+1))/2};
+                    const D=J.ui.plan.duration, span=D/J.ui.timelineZoom;
+                    J.ui.timelineStart=Math.max(0,Math.min(D-span,target.start-span*.35));
+                    J.ui.need=true;
                   }""")
-                  x=tl["x"] + (view["targetTime"]-view["start"])/view["span"]*tl["width"]
-                  # Click the upper part of the cut band so this tests the item body,
-                  # not the dice/lock buttons drawn near the bottom.
-                  y=tl["y"] + tl["height"]*.37
+                  await page.wait_for_timeout(160)
+                  tl=await page.locator("#timeline").bounding_box()
+                  canvas_size=await page.locator("#timeline").evaluate("el=>({w:el.width,h:el.height})")
+                  hit=await page.evaluate("""() => {
+                    const a=J.ui.timelineCutHits.filter(h=>h.line===22);
+                    return a.length ? a[0] : null;
+                  }""")
+                  if not hit:
+                      raise RuntimeError("line 22 has no rendered timeline hit rectangle")
+                  x=tl["x"] + (hit["x"]+hit["w"]*.5)/canvas_size["w"]*tl["width"]
+                  y=tl["y"] + (hit["y"]+min(hit["h"]*.22,8))/canvas_size["h"]*tl["height"]
                   await page.mouse.click(x,y)
                   await page.wait_for_timeout(150)
                   jump=await page.evaluate("""() => {
