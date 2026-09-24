@@ -10,10 +10,20 @@ const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Mat
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
-  if (ans < 0) return null;
-  const c = cs[ans];
-  return t < c.end ? c : null;
+  // Manual end times can create overlap between lyric lines. The later-started
+  // lyric line owns the foreground; within that line, use its latest active cut.
+  let best = null, bestLineStart = -Infinity, bestCutStart = -Infinity;
+  for (let i = 0; i <= ans; i++) {
+    const cut = cs[i];
+    if (!(cut.start <= t && t < cut.end)) continue;
+    const lineStart = cut.line >= 0 && plan.lines && plan.lines[cut.line] ? plan.lines[cut.line].start : cut.start;
+    if (lineStart > bestLineStart + 1e-9 || (Math.abs(lineStart - bestLineStart) <= 1e-9 && cut.start > bestCutStart)) {
+      best = cut; bestLineStart = lineStart; bestCutStart = cut.start;
+    }
+  }
+  return best;
 };
+J.cutsAt = (plan, t) => (plan.cuts || []).filter(c => c.start <= t && t < c.end);
 
 class Renderer {
   constructor() {
@@ -64,7 +74,7 @@ class Renderer {
     const stepDur = J.stepDur(fx, fps);
     const clock = J.komaOf(fx) > 0 ? stepDur : 1 / 24;
     const tq = Math.floor(t / stepDur + 1e-6) * stepDur;
-    const mainCut = J.cutAt(plan, tq);
+    const mainCut = opt.forceCut || J.cutAt(plan, tq);
     const st = styleFor(mainCut);
     const sc = st.schemes[mainCut ? mainCut.scheme % st.schemes.length : 0] || st.schemes[0];
     const allowFilter = this.filterOK && !opt.fast;
@@ -118,6 +128,27 @@ class Renderer {
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
     }
     if (opt.backgroundOnly) { ctx.restore(); return; }
+
+    // When a line has an explicit end beyond the next line's start, keep the
+    // manually extended line visible underneath later items for the overlap.
+    if (!opt.noOverlap && !opt.forceCut && mainCut && J.cutsAt) {
+      const overlaps = J.cutsAt(plan, tq).filter(c => c !== mainCut && c.manualEnd && c.line >= 0 && c.line !== mainCut.line);
+      if (overlaps.length) {
+        const O = this.ensure(this.overlapLayer || (this.overlapLayer = mk(2, 2)), cw, ch);
+        const ox = O.getContext('2d');
+        this.overlapRenderer = this.overlapRenderer || new Renderer();
+        for (const oc of overlaps) {
+          this.overlapRenderer.frame(ox, plan, tq, {
+            scale, transparent: true, forceCut: oc, noOverlap: true,
+            noTrans: true, noPost: true, noHud: true, fast: opt.fast
+          });
+          ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+          ctx.drawImage(O, 0, 0); ctx.restore();
+        }
+      }
+    }
+
     const shx = J.rs(step, 71) * shake * 16 * u, shy = J.rs(step, 72) * shake * 11 * u;
     // ---------- content passes ----------
     const passes = [
@@ -145,7 +176,7 @@ class Renderer {
     for (const P of passes) {
       if (P.pass !== 'main' && !ghostOn) continue;
       const tp = Math.max(0, tq - P.lag);
-      const cut = P.lag ? J.cutAt(plan, tp) : mainCut;
+      const cut = opt.forceCut ? mainCut : (P.lag ? J.cutAt(plan, tp) : mainCut);
       if (!cut) continue;
       const cst = styleFor(cut);
       const csc = cst.schemes[cut.scheme % cst.schemes.length] || cst.schemes[0];

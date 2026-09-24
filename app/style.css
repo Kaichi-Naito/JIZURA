@@ -102,8 +102,8 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 }
 .ln {
   display: grid;
-  grid-template-columns: 18px 58px minmax(0, 1fr) 26px 26px;
-  gap: 3px 4px;
+  grid-template-columns: 18px 52px 8px 52px minmax(0, 1fr) 26px 26px;
+  gap: 3px 3px;
   align-items: center;
   padding: 3px 4px;
   border: 1px solid transparent;
@@ -112,13 +112,15 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln:hover { background: var(--raised); }
 .ln.cur { border-color: var(--line2); background: var(--raised); }
 .ln .no { font: 500 10px var(--mono); color: var(--faint); text-align: right; }
-.ln .time { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 11px; }
+.ln .time { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 10px; }
+.ln .time-arrow { font-size: 9px; color: var(--faint); text-align: center; line-height: 1; }
+.ln .end-time:not([style*="border-color"]) { color: var(--muted); }
 .ln .txt { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
 .ln .txt:hover { border-color: var(--line2); }
 .ln .txt:focus { background: var(--ink); border-color: var(--amber); }
 .ln > button.icon { width: 26px; height: 26px; padding: 3px 4px; }
 .ln .meta {
-  grid-column: 2 / 6;
+  grid-column: 2 / 8;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;

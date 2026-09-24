@@ -23,7 +23,7 @@ J.defaultProject = () => ({
   aspect: '16:9', res: 1080, fps: 24,
   fx: { motion: 0.7, glitch: 0.55, chroma: 0.7, decor: 0.5, density: 0.55, texture: 0.6, flash: true, onTwos: true, koma: 12, hud: 'auto', bgSwitch: 0.35 },
   enabled: Object.fromEntries(J.GROUP_KEYS.map(g => [g, Object.fromEntries(J.order(g).map(k => [k, true]))])),
-  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, cutBoundaries: {}, lineScale: 1 },
+  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, lineEnds: {}, cutBoundaries: {}, lineScale: 1 },
   overrides: {},
   colors: { enabled: false },
   fonts: {},
@@ -155,14 +155,17 @@ J.computeTiming = (project, parsed, audio) => {
     starts.push(s);
   });
   const ends = starts.map((s, i) => {
+    const man = T.lineEnds && T.lineEnds[i] != null ? +T.lineEnds[i] : null;
+    if (man != null && isFinite(man)) return Math.max(s + 0.05, man);
     if (i < starts.length - 1) return Math.max(s + 0.35, starts[i + 1]);
     const n = [...lines[i].text].length;
     let d = J.clamp(0.8 + n * 0.17, 1.5, 5.2) * (T.lineScale || 1);
     if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
     return s + d;
   });
-  let duration = (ends.length ? ends[ends.length - 1] : 3) + (T.tail ?? 0.9);
-  if (audio && audio.duration && T.useAudioLength !== false) duration = Math.max(audio.duration, ends.length ? ends[ends.length - 1] + 0.2 : 1);
+  const maxEnd = ends.length ? Math.max(...ends) : 3;
+  let duration = maxEnd + (T.tail ?? 0.9);
+  if (audio && audio.duration && T.useAudioLength !== false) duration = Math.max(audio.duration, maxEnd + 0.2);
   return { starts, ends, duration };
 };
 
@@ -208,6 +211,7 @@ J.plan = (project, audio) => {
 
   parsed.lines.forEach((ln, li) => {
     const s = tm.starts[li], e = tm.ends[li];
+    const manualEnd = !!(project.timing && project.timing.lineEnds && project.timing.lineEnds[li] != null && isFinite(+project.timing.lineEnds[li]));
     const ov = (project.overrides || {})[li] || {};
     const lineStyleKey = ov.style && J.STYLES[ov.style] ? ov.style : project.style;
     const lineSt = J.resolveLineStyle ? J.resolveLineStyle(project, lineStyleKey) : st;
@@ -221,9 +225,9 @@ J.plan = (project, audio) => {
     const history = [], bgHistory = [], fxHistory = [];
     let schemeIdx = 0;
     const n = [...ln.text.replace(/\s+/g, '')].length;
-    const visEnd = Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
-    const D = visEnd - s;
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
+    const D = Math.max(0.05, visEnd - s);
+    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
@@ -296,7 +300,7 @@ J.plan = (project, audio) => {
           if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
-      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, lineCut: k, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
+      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, lineCut: k, start: cs, end: ce, manualEnd, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: bg === lineBg ? lineBgP : {}, cam, camP, trans, transP, transDur });
       plan.cuts.push(cut);
       history.push({ layout, enter, exit, hold, treat, cam, trans, decor: decor.map(d => d.id) });
