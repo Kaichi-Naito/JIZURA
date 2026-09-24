@@ -1670,12 +1670,15 @@ function bind() {
   const tl = $('timeline');
   let drag = false;
   tl.addEventListener('pointerdown', e => {
+    // Any press on a timeline item first focuses the corresponding row in
+    // "行とカット". Action icons / boundary dragging can then handle the same press.
+    const pressedCut = timelineCutAtPointer(e);
+    if (pressedCut && pressedCut.line >= 0) revealLineInList(pressedCut.line);
     const a = timelineActionAt(e);
     if (a) {
       e.preventDefault(); e.stopPropagation();
       drag = false;
       S.timelineActionHover = null;
-      revealLineInList(a.line);
       if (a.action === 'dice') rerollLine(a.line);
       else toggleLineLock(a.line);
       return;
@@ -1692,8 +1695,6 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
-    const clickedCut = timelineCutAtPointer(e);
-    if (clickedCut && clickedCut.line >= 0) revealLineInList(clickedCut.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
