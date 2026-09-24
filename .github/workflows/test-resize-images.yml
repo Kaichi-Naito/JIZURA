@@ -1,0 +1,194 @@
+name: Test resizable workspace timeline focus and image items
+
+on:
+  push:
+    branches:
+      - resizable-panels-timeline-focus-images
+    paths:
+      - ".github/workflows/test-resize-images.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run browser regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio, struct, zlib, binascii, os
+          from playwright.async_api import async_playwright
+
+          def png_chunk(t, data):
+              return struct.pack(">I", len(data)) + t + data + struct.pack(">I", binascii.crc32(t+data)&0xffffffff)
+          raw=b"\x00\xff\x00\x00\xff"
+          png=b"\x89PNG\r\n\x1a\n"+png_chunk(b"IHDR",struct.pack(">IIBBBBB",1,1,8,6,0,0,0))+png_chunk(b"IDAT",zlib.compress(raw))+png_chunk(b"IEND",b"")
+          open("/tmp/red.png","wb").write(png)
+
+          async def main():
+              async with async_playwright() as p:
+                  browser=await p.chromium.launch()
+                  page=await browser.new_page(viewport={"width":1600,"height":950})
+                  errors=[]
+                  page.on("pageerror",lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#leftResizeHandle")
+
+                  # 1) Drag left splitter.
+                  left0=await page.locator(".col-left").bounding_box()
+                  hv=await page.locator("#leftResizeHandle").bounding_box()
+                  await page.mouse.move(hv["x"]+hv["width"]/2,hv["y"]+100)
+                  await page.mouse.down()
+                  await page.mouse.move(hv["x"]+hv["width"]/2+80,hv["y"]+100,steps=5)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(100)
+                  left1=await page.locator(".col-left").bounding_box()
+                  saved_left=await page.evaluate("J.ui.project.ui.leftWidth")
+                  if left1["width"] < left0["width"]+55 or abs(saved_left-left1["width"])>3:
+                      raise RuntimeError(f"left splitter failed: {left0} -> {left1}, saved={saved_left}")
+
+                  # 2) Drag horizontal preview splitter down.
+                  vp0=await page.locator("#viewport").bounding_box()
+                  hh=await page.locator("#stageResizeHandle").bounding_box()
+                  await page.mouse.move(hh["x"]+100,hh["y"]+hh["height"]/2)
+                  await page.mouse.down()
+                  await page.mouse.move(hh["x"]+100,hh["y"]+hh["height"]/2+70,steps=5)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(120)
+                  vp1=await page.locator("#viewport").bounding_box()
+                  saved_h=await page.evaluate("J.ui.project.ui.previewHeight")
+                  if vp1["height"] < vp0["height"]+45 or abs(saved_h-vp1["height"])>4:
+                      raise RuntimeError(f"preview splitter failed: {vp0} -> {vp1}, saved={saved_h}")
+
+                  # 3) Import an image as a lyric item.
+                  await page.locator("#imageFile").set_input_files("/tmp/red.png")
+                  await page.wait_for_timeout(550)
+                  img_state=await page.evaluate("""() => {
+                    const parsed=J.parseLyrics(J.ui.project.lyrics);
+                    const il=parsed.lines.findIndex(x=>!!x.imageId);
+                    const line=il>=0?J.ui.plan.lines[il]:null;
+                    const cut=il>=0?J.ui.plan.cuts.find(c=>c.line===il&&c.assetId):null;
+                    const asset=line&&J.ui.project.assets.images[line.imageId];
+                    return {
+                      raw:J.ui.project.lyrics,
+                      lineIndex:il,
+                      imageId:line&&line.imageId,
+                      asset:asset&&{name:asset.name,type:asset.type,width:asset.width,height:asset.height,data:asset.dataUrl&&asset.dataUrl.slice(0,30)},
+                      cut:cut&&{assetId:cut.assetId,layout:cut.layout,start:cut.start,end:cut.end},
+                      cached:!!(line&&J.imageAssetCache.get(line.imageId))
+                    };
+                  }""")
+                  if img_state["lineIndex"]<0 or not img_state["imageId"] or not img_state["cut"] or img_state["cut"]["layout"]!="image" or not img_state["cached"]:
+                      raise RuntimeError(f"image item import/plan/cache failed: {img_state}")
+                  if "[img:" not in img_state["raw"] or img_state["asset"]["type"]!="image/webp":
+                      raise RuntimeError(f"image token/asset format failed: {img_state}")
+
+                  # Render the image cut and verify a red foreground pixel exists near center.
+                  render=await page.evaluate("""() => {
+                    const line=J.ui.plan.lines.find(x=>x.imageId);
+                    const cut=J.ui.plan.cuts.find(c=>c.line===line.index&&c.assetId);
+                    const cv=document.createElement('canvas');cv.width=320;cv.height=180;
+                    const ctx=cv.getContext('2d');
+                    const R=new J.Renderer();
+                    R.frame(ctx,J.ui.plan,cut.start+Math.max(.2,cut.dur*.5),{scale:320/J.ui.plan.W,fast:true});
+                    const d=ctx.getImageData(0,0,320,180).data;
+                    let red=0;
+                    for(let i=0;i<d.length;i+=4) if(d[i]>180&&d[i]>d[i+1]*1.5&&d[i]>d[i+2]*1.5) red++;
+                    return {red,cut:{start:cut.start,end:cut.end}};
+                  }""")
+                  if render["red"]<100:
+                      raise RuntimeError(f"image item did not render visibly: {render}")
+
+                  # 4) Timeline item click explicitly scrolls line list to clicked line.
+                  # Make many lines after the image so the target can be offscreen.
+                  await page.evaluate("""() => {
+                    const token=J.ui.project.lyrics.split('\n').find(x=>x.startsWith('[img:'));
+                    const more=Array.from({length:28},(_,i)=>'TEXT '+String(i+1).padStart(2,'0'));
+                    const prev=J.ui.project.lyrics;
+                    const next=[token,...more].join('\n');
+                    J.ui.project.lyrics=next;
+                    document.querySelector('#lyrics').value=next;
+                    J.ui.project.timing.lineTimes=Object.fromEntries(Array.from({length:29},(_,i)=>[i,i*2]));
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(250)
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=el.scrollHeight")
+                  scroll_before=await page.locator("#lineList").evaluate("el=>el.scrollTop")
+                  await page.evaluate("""() => {
+                    J.ui.timelineZoom=1; J.ui.timelineStart=0; J.ui.need=true;
+                  }""")
+                  await page.wait_for_timeout(120)
+                  tl=await page.locator("#timeline").bounding_box()
+                  dur=await page.evaluate("J.ui.plan.duration")
+                  # Click the first image cut around its midpoint in the cut band.
+                  tmid=await page.evaluate("""() => {
+                    const c=J.ui.plan.cuts.find(c=>c.assetId); return (c.start+c.end)/2;
+                  }""")
+                  x=tl["x"]+tmid/dur*tl["width"]; y=tl["y"]+tl["height"]*.58
+                  await page.mouse.click(x,y)
+                  await page.wait_for_timeout(140)
+                  focus_state=await page.evaluate("""() => {
+                    const list=document.querySelector('#lineList'),el=J.ui.lineEls[0];
+                    const lr=list.getBoundingClientRect(),er=el.getBoundingClientRect();
+                    return {scroll:list.scrollTop,visible:er.top>=lr.top-1&&er.bottom<=lr.bottom+1};
+                  }""")
+                  if not focus_state["visible"] or focus_state["scroll"]>=scroll_before-20:
+                      raise RuntimeError(f"timeline click did not navigate line list: before={scroll_before}, after={focus_state}")
+
+                  # 5) Saved payload includes image bytes and workspace sizes, reload restores all.
+                  payload=await page.evaluate("J.uiApi.projectPayloadForSave()")
+                  imgs=payload.get("assets",{}).get("images",{})
+                  if not imgs or not next(iter(imgs.values())).get("dataUrl","").startswith("data:image/webp"):
+                      raise RuntimeError("saved project payload lost image bytes")
+                  if not payload.get("ui",{}).get("leftWidth") or not payload.get("ui",{}).get("previewHeight"):
+                      raise RuntimeError(f"saved project payload lost splitter sizes: {payload.get('ui')}")
+
+                  await page.evaluate("J.uiApi.flushSave()")
+                  await page.reload()
+                  await page.wait_for_function("() => !!J.ui && !!J.ui.plan && J.ui.plan.lines.length>0")
+                  await page.wait_for_timeout(250)
+                  restored=await page.evaluate("""() => {
+                    const line=J.ui.plan.lines.find(x=>x.imageId);
+                    return {
+                      left:document.querySelector('.col-left').getBoundingClientRect().width,
+                      preview:document.querySelector('#viewport').getBoundingClientRect().height,
+                      savedLeft:J.ui.project.ui.leftWidth,
+                      savedPreview:J.ui.project.ui.previewHeight,
+                      imageId:line&&line.imageId,
+                      cached:!!(line&&J.imageAssetCache.get(line.imageId))
+                    };
+                  }""")
+                  if abs(restored["left"]-restored["savedLeft"])>4 or abs(restored["preview"]-restored["savedPreview"])>4 or not restored["imageId"] or not restored["cached"]:
+                      raise RuntimeError(f"reload restore failed: {restored}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"left":[left0["width"],left1["width"]],"preview":[vp0["height"],vp1["height"]],"image":img_state,"render":render,"focus":focus_state,"restored":restored})
+                  await browser.close()
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
