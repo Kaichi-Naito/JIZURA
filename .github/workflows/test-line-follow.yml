@@ -1,0 +1,128 @@
+name: Test current-line list follow
+
+on:
+  push:
+    branches:
+      - follow-current-line-in-list
+    paths:
+      - ".github/workflows/test-line-follow.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Test line-list follow
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width":1440,"height":900})
+                  errors=[]
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#lineList")
+
+                  lyrics="\n".join([f"LINE {i:02d}" for i in range(1,31)])
+                  await page.fill("#lyrics", lyrics)
+                  await page.wait_for_timeout(500)
+                  await page.evaluate("""() => {
+                    const t={};
+                    for(let i=0;i<30;i++) t[i]=i*2;
+                    J.ui.project.timing.lineTimes=t;
+                    J.ui.project.timing.snap=false;
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(250)
+
+                  metrics=await page.locator("#lineList").evaluate("""el=>({
+                    clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,scrollTop:el.scrollTop
+                  })""")
+                  if metrics["scrollHeight"] <= metrics["clientHeight"]:
+                      raise RuntimeError(f"line list did not overflow: {metrics}")
+
+                  # Jump from the beginning to line 25. Only the line list should scroll.
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
+                  win_before=await page.evaluate("window.scrollY")
+                  await page.evaluate("J.uiApi.seek(48.01)")
+                  await page.wait_for_timeout(150)
+                  state=await page.evaluate("""() => {
+                    const list=document.querySelector('#lineList');
+                    const el=J.ui.lineEls[24];
+                    const lr=list.getBoundingClientRect(), er=el.getBoundingClientRect();
+                    return {
+                      scrollTop:list.scrollTop,
+                      visible:er.top>=lr.top-1 && er.bottom<=lr.bottom+1,
+                      current:el.classList.contains('cur'),
+                      windowY:window.scrollY
+                    };
+                  }""")
+                  if state["scrollTop"] <= 0 or not state["visible"] or not state["current"]:
+                      raise RuntimeError(f"normal-order follow failed: {state}")
+                  if state["windowY"] != win_before:
+                      raise RuntimeError(f"line follow scrolled the page: {win_before}->{state['windowY']}")
+
+                  # Turn time-sort on with intentionally non-lyric-order timestamps.
+                  await page.evaluate("""() => {
+                    const t={};
+                    for(let i=0;i<30;i++) t[i]=(29-i)*2;
+                    J.ui.project.timing.lineTimes=t;
+                    J.ui.project.ui.lineSortByTime=true;
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(200)
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
+                  # In time order, original line 5 is far down the list (time=50).
+                  await page.evaluate("J.uiApi.seek(50.01)")
+                  await page.wait_for_timeout(150)
+                  sorted_state=await page.evaluate("""() => {
+                    const list=document.querySelector('#lineList');
+                    const el=J.ui.lineEls[4];
+                    const lr=list.getBoundingClientRect(), er=el.getBoundingClientRect();
+                    return {
+                      scrollTop:list.scrollTop,
+                      visible:er.top>=lr.top-1 && er.bottom<=lr.bottom+1,
+                      current:el.classList.contains('cur'),
+                      pressed:document.querySelector('#btnSortLines').getAttribute('aria-pressed')
+                    };
+                  }""")
+                  if sorted_state["scrollTop"] <= 0 or not sorted_state["visible"] or not sorted_state["current"] or sorted_state["pressed"]!="true":
+                      raise RuntimeError(f"time-sorted follow failed: {sorted_state}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"normal":state,"sorted":sorted_state})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
