@@ -737,6 +737,20 @@ function timelineActionAt(ev) {
   }
   return null;
 }
+function timelineItemAt(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const y = (ev.clientY - r.top) / Math.max(1, r.height);
+  if (y < 0.30 || y > 0.92) return null;
+  return J.cutAt(S.plan, timelineTimeAt(ev));
+}
+function scrollLineListTo(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const target = list.scrollTop + (er.top - lr.top) - Math.max(0, (lr.height - er.height) * 0.35);
+  list.scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, target));
+}
 function timelineEditableBoundaries() {
   ensureLineCutOrdinals(S.plan);
   const cuts = (S.plan.cuts || []).slice().sort((a, b) => a.start - b.start);
@@ -847,6 +861,66 @@ function updateCutInfo() {
     cut.cam && cut.cam !== 'push' ? chip('c', 'カメラ', n(J.CAMERA, cut.cam)) : '',
     cut.trans ? chip('c', 'つなぎ', n(J.TRANS, cut.trans)) : '',
   ].join('');
+}
+
+/* ---------------- image lyric assets ---------------- */
+function newImageAssetId() {
+  try { if (crypto && crypto.randomUUID) return 'img_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16); } catch (e) {}
+  return 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+}
+async function normalizeImageFile(file) {
+  let source = null;
+  try { source = await createImageBitmap(file); }
+  catch (e) {
+    const url = URL.createObjectURL(file);
+    try {
+      source = await new Promise((resolve, reject) => {
+        const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const sw = source.width || source.naturalWidth, sh = source.height || source.naturalHeight;
+  if (!(sw > 0 && sh > 0)) throw new Error('画像サイズを取得できませんでした');
+  const maxSide = 1920, k = Math.min(1, maxSide / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(source, 0, 0, w, h);
+  if (source.close) try { source.close(); } catch (e) {}
+  const blob = await new Promise((resolve, reject) => cv.toBlob(b => b ? resolve(b) : reject(new Error('画像を変換できませんでした')), 'image/webp', 0.9));
+  return { name: file.name || 'image', type: 'image/webp', width: w, height: h, dataUrl: await blobToDataUrl(blob) };
+}
+function insertLyricAssetTokens(tokens) {
+  const el = $('lyrics'), prev = S.project.lyrics || '';
+  const a = Math.max(0, el.selectionStart == null ? prev.length : el.selectionStart);
+  const b = Math.max(a, el.selectionEnd == null ? a : el.selectionEnd);
+  const before = prev.slice(0, a), after = prev.slice(b);
+  const block = tokens.join('\n');
+  const pre = before && !before.endsWith('\n') ? '\n' : '';
+  const post = after && !after.startsWith('\n') ? '\n' : '';
+  const next = before + pre + block + post + after;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next; el.value = next;
+  const caret = (before + pre + block).length;
+  el.focus(); el.setSelectionRange(caret, caret);
+}
+async function importImageFiles(files) {
+  const list = [...(files || [])].filter(f => f && /^image\//.test(f.type || ''));
+  if (!list.length) return [];
+  S.project.assets = S.project.assets || { images: {} };
+  S.project.assets.images = S.project.assets.images || {};
+  const tokens = [], ids = [];
+  showMsg('画像を読み込み中…');
+  try {
+    for (const f of list) {
+      const id = newImageAssetId(), asset = await normalizeImageFile(f);
+      S.project.assets.images[id] = asset;
+      ids.push(id); tokens.push('[img:' + id + ']');
+    }
+    insertLyricAssetTokens(tokens);
+    if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
+    fontKey = ''; replan();
+    return ids;
+  } finally { showMsg(null); }
 }
 
 /* ---------------- line list ---------------- */
@@ -1421,6 +1495,12 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
+  $('imageFile').addEventListener('change', async e => {
+    const files = e.target.files;
+    try { await importImageFiles(files); }
+    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3000); }
+    e.target.value = '';
+  });
   $('lyrics').addEventListener('input', e => {
     const next = e.target.value, prev = S.project.lyrics;
     remapLineIndexedState(prev, next);
@@ -1486,6 +1566,8 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
+    const item = timelineItemAt(e);
+    if (item && item.line >= 0) scrollLineListTo(item.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
@@ -1659,8 +1741,42 @@ function bind() {
     else if (e.code === 'ArrowLeft') seek(S.t - (e.shiftKey ? 1 : 1 / S.plan.fps));
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
+  const bindSplitter = (id, axis) => {
+    const h = $(id); if (!h) return;
+    let d = null;
+    h.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      const ui = S.project.ui || (S.project.ui = {});
+      d = {
+        id: e.pointerId, x: e.clientX, y: e.clientY,
+        left: document.querySelector('.col-left').getBoundingClientRect().width,
+        height: $('viewport').getBoundingClientRect().height
+      };
+      h.classList.add('dragging'); h.setPointerCapture(e.pointerId);
+    });
+    h.addEventListener('pointermove', e => {
+      if (!d || e.pointerId !== d.id) return;
+      const ui = S.project.ui || (S.project.ui = {});
+      if (axis === 'x') {
+        const maxLeft = Math.max(250, Math.min(560, window.innerWidth - 650));
+        ui.leftWidth = Math.round(J.clamp(d.left + e.clientX - d.x, 250, maxLeft));
+      } else {
+        const stageH = document.querySelector('.col-stage').clientHeight || window.innerHeight;
+        ui.previewHeight = Math.round(J.clamp(d.height + e.clientY - d.y, 180, Math.max(180, stageH - 170)));
+      }
+      applyWorkspaceSizes(); sizeViewport(); drawTimeline();
+    });
+    const done = e => {
+      if (!d) return;
+      try { if (h.hasPointerCapture(d.id)) h.releasePointerCapture(d.id); } catch (err) {}
+      d = null; h.classList.remove('dragging'); autosave();
+    };
+    h.addEventListener('pointerup', done); h.addEventListener('pointercancel', done);
+  };
+  bindSplitter('leftResizeHandle', 'x');
+  bindSplitter('stageResizeHandle', 'y');
   $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
-  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
+  window.addEventListener('resize', () => { closeLayoutMenu(); applyWorkspaceSizes(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) {
     new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
     let lyricsResizeReady = false;
@@ -1726,5 +1842,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, importImageFiles, scrollLineListTo, applyWorkspaceSizes };
 })();
