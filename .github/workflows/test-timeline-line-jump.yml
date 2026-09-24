@@ -63,6 +63,8 @@ jobs:
                     return h && {x:h.x,y:h.y,w:h.w,h:h.h,line:h.line,cutIndex:h.cutIndex};
                   }""")
                   assert hit, "no timeline hit for line 0"
+                  await page.locator("#timeline").scroll_into_view_if_needed()
+                  await page.wait_for_timeout(80)
                   tl=await page.locator("#timeline").bounding_box()
                   cs=await page.locator("#timeline").evaluate("el=>({w:el.width,h:el.height})")
                   x=tl["x"]+(hit["x"]+hit["w"]*.5)/cs["w"]*tl["width"]
