@@ -1,0 +1,184 @@
+name: Test manual line end times
+
+on:
+  push:
+    branches:
+      - manual-line-end-times
+    paths:
+      - ".github/workflows/test-line-end-times.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width":1440,"height":900})
+                  errors=[]
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#lineList .ln")
+
+                  # Controlled two-line timing.
+                  await page.fill("#lyrics", "FIRST\nSECOND")
+                  await page.wait_for_timeout(420)
+                  await page.evaluate("""() => {
+                    J.ui.project.timing.lineTimes={0:1,1:3};
+                    J.ui.project.timing.lineEnds={};
+                    J.ui.project.timing.cutBoundaries={};
+                    J.ui.project.timing.snap=false;
+                    J.ui.project.fx.density=.2;
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(220)
+
+                  base=await page.evaluate("""() => ({
+                    ends:J.ui.plan.lines.map(x=>x.end),
+                    manual:J.ui.plan.lines.map(x=>x.manualEnd),
+                    rowHeight:document.querySelector('#lineList .ln').getBoundingClientRect().height,
+                    endInputs:document.querySelectorAll('#lineList .end-time').length
+                  })""")
+                  if abs(base["ends"][0]-3)>1e-6 or base["manual"][0] or base["endInputs"]!=2:
+                      raise RuntimeError(f"default auto-linked end is wrong: {base}")
+                  if base["rowHeight"]>66:
+                      raise RuntimeError(f"end field broke compact row height: {base}")
+
+                  # Set line 1 end well beyond line 2's start.
+                  end0=page.locator("#lineList .ln").filter(has=page.locator("[data-line-index='0']"))
+                  # dataset is on the li itself; use nth(0) for reliability.
+                  end_input=page.locator("#lineList .ln").nth(0).locator(".end-time")
+                  await end_input.fill("8.00")
+                  await end_input.press("Enter")
+                  await page.wait_for_timeout(320)
+
+                  manual=await page.evaluate("""() => {
+                    const p=J.ui.plan;
+                    const active=J.cutsAt(p,3.5).map(c=>({line:c.line,start:c.start,end:c.end,manualEnd:c.manualEnd}));
+                    const fg=J.cutAt(p,3.5);
+                    const after=J.cutAt(p,6.0);
+                    const canvas=document.createElement('canvas'); canvas.width=640; canvas.height=360;
+                    const R=new J.Renderer();
+                    R.frame(canvas.getContext('2d'),p,3.5,{scale:640/p.W,fast:true});
+                    return {
+                      stored:J.ui.project.timing.lineEnds[0],
+                      line:p.lines[0],
+                      line1:p.lines[1],
+                      active,
+                      foreground:fg&&fg.line,
+                      afterLaterEnds:after&&after.line,
+                      overlapRenderer:!!R.overlapRenderer,
+                      duration:p.duration
+                    };
+                  }""")
+                  if abs(float(manual["stored"])-8)>1e-6 or not manual["line"]["manualEnd"] or abs(float(manual["line"]["end"])-8)>1e-6 or abs(float(manual["line"]["visEnd"])-8)>1e-6:
+                      raise RuntimeError(f"manual end was not applied: {manual}")
+                  lines_at_overlap={x["line"] for x in manual["active"]}
+                  if 0 not in lines_at_overlap or 1 not in lines_at_overlap:
+                      raise RuntimeError(f"expected both lines active during overlap: {manual}")
+                  if manual["foreground"]!=1:
+                      raise RuntimeError(f"later-started line is not foreground during overlap: {manual}")
+                  if manual["afterLaterEnds"]!=0:
+                      raise RuntimeError(f"extended earlier line did not return after later line ended: {manual}")
+                  if not manual["overlapRenderer"]:
+                      raise RuntimeError(f"overlap underlay renderer did not run: {manual}")
+                  if manual["duration"] < 8.19:
+                      raise RuntimeError(f"project duration did not extend with manual end: {manual}")
+
+                  # Clearing end time returns to automatic linkage.
+                  await page.locator("#lineList .ln").nth(0).locator(".end-time").fill("")
+                  await page.locator("#lineList .ln").nth(0).locator(".end-time").press("Enter")
+                  await page.wait_for_timeout(300)
+                  cleared=await page.evaluate("""() => ({
+                    has:Object.prototype.hasOwnProperty.call(J.ui.project.timing.lineEnds,0),
+                    end:J.ui.plan.lines[0].end,
+                    manual:J.ui.plan.lines[0].manualEnd
+                  })""")
+                  if cleared["has"] or cleared["manual"] or abs(float(cleared["end"])-3)>1e-6:
+                      raise RuntimeError(f"clearing end did not restore auto linkage: {cleared}")
+
+                  # Last line can be extended extremely far and grows project duration.
+                  await page.locator("#lineList .ln").nth(1).locator(".end-time").fill("25")
+                  await page.locator("#lineList .ln").nth(1).locator(".end-time").press("Enter")
+                  await page.wait_for_timeout(280)
+                  long_end=await page.evaluate("""() => ({
+                    end:J.ui.plan.lines[1].end,
+                    duration:J.ui.plan.duration,
+                    stored:J.ui.project.timing.lineEnds[1]
+                  })""")
+                  if abs(float(long_end["end"])-25)>1e-6 or long_end["duration"]<25.19:
+                      raise RuntimeError(f"extreme last-line end failed: {long_end}")
+
+                  # End times follow the lyric item when a new line is inserted before it.
+                  await page.evaluate("""() => {
+                    J.ui.project.lyrics='FIRST\nSECOND';
+                    J.ui.project.timing.lineTimes={0:1,1:3};
+                    J.ui.project.timing.lineEnds={1:12.5};
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(180)
+                  await page.fill("#lyrics","INSERTED\nFIRST\nSECOND")
+                  await page.wait_for_timeout(500)
+                  remap=await page.evaluate("""() => ({
+                    lines:J.ui.plan.lines.map(x=>x.text),
+                    ends:J.ui.project.timing.lineEnds
+                  })""")
+                  if remap["lines"]!=["INSERTED","FIRST","SECOND"] or abs(float(remap["ends"].get("2",0))-12.5)>1e-6:
+                      raise RuntimeError(f"manual end did not follow its lyric after insertion: {remap}")
+
+                  # Reset timing removes manual starts, ends, and dragged boundaries.
+                  await page.evaluate("""() => {
+                    J.ui.project.timing.lineTimes={0:1};
+                    J.ui.project.timing.lineEnds={0:9};
+                    J.ui.project.timing.cutBoundaries={'0:0>1:0':4};
+                  }""")
+                  await page.click("#btnResetTimes")
+                  await page.wait_for_timeout(180)
+                  reset=await page.evaluate("""() => ({
+                    starts:J.ui.project.timing.lineTimes,
+                    ends:J.ui.project.timing.lineEnds,
+                    boundaries:J.ui.project.timing.cutBoundaries
+                  })""")
+                  if reset["starts"] or reset["ends"] or reset["boundaries"]:
+                      raise RuntimeError(f"timing reset did not clear all manual timing: {reset}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"base":base,"manual":manual,"cleared":cleared,"long":long_end,"remap":remap,"reset":reset})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
