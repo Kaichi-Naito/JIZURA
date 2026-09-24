@@ -1,0 +1,197 @@
+name: Test workspace resize timeline jump images
+
+on:
+  push:
+    branches:
+      - resizable-workspace-timeline-jump-images
+    paths:
+      - ".github/workflows/test-workspace-images.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run browser regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width":1600,"height":950})
+                  errors=[]
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#timeline")
+
+                  # 1) Workspace splitters resize and persist their values.
+                  left_before = await page.locator(".col-left").evaluate("el=>el.getBoundingClientRect().width")
+                  splitter = await page.locator("#leftSplitter").bounding_box()
+                  await page.mouse.move(splitter["x"]+splitter["width"]/2, splitter["y"]+100)
+                  await page.mouse.down()
+                  await page.mouse.move(splitter["x"]+splitter["width"]/2+70, splitter["y"]+100, steps=6)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(120)
+                  left_after = await page.locator(".col-left").evaluate("el=>el.getBoundingClientRect().width")
+                  left_saved = await page.evaluate("J.ui.project.ui.leftWidth")
+                  if left_after < left_before+50 or abs(left_after-float(left_saved))>4:
+                      raise RuntimeError(f"left splitter failed: {left_before}->{left_after}, saved={left_saved}")
+
+                  dock_before = await page.locator("#timelineDock").evaluate("el=>el.getBoundingClientRect().height")
+                  hs = await page.locator("#stageSplitter").bounding_box()
+                  await page.mouse.move(hs["x"]+120, hs["y"]+hs["height"]/2)
+                  await page.mouse.down()
+                  await page.mouse.move(hs["x"]+120, hs["y"]-70, steps=6)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(120)
+                  dock_after = await page.locator("#timelineDock").evaluate("el=>el.getBoundingClientRect().height")
+                  dock_saved = await page.evaluate("J.ui.project.ui.timelineDockHeight")
+                  if dock_after < dock_before+45 or abs(dock_after-float(dock_saved))>5:
+                      raise RuntimeError(f"horizontal splitter failed: {dock_before}->{dock_after}, saved={dock_saved}")
+
+                  # 2) Add a real PNG as a lyric element and verify rendering + project embedding.
+                  await page.fill("#lyrics","HELLO\nWORLD")
+                  await page.locator("#lyrics").focus()
+                  await page.locator("#lyrics").evaluate("el=>el.setSelectionRange(el.value.length,el.value.length)")
+                  meta = await page.evaluate(r"""
+                  async () => {
+                    const c=document.createElement('canvas'); c.width=64; c.height=32;
+                    const x=c.getContext('2d'); x.fillStyle='#ff0000'; x.fillRect(0,0,64,32);
+                    const blob=await new Promise(r=>c.toBlob(r,'image/png'));
+                    const f=new File([blob],'red-card.png',{type:'image/png',lastModified:12345});
+                    return await J.uiApi.addImageFile(f);
+                  }
+                  """)
+                  await page.wait_for_timeout(350)
+                  img_state = await page.evaluate("""id => {
+                    const parsed=J.parseLyrics(J.ui.project.lyrics);
+                    const li=parsed.lines.findIndex(x=>x.kind==='image' && x.imageId===id);
+                    const line=J.ui.plan.lines[li];
+                    const cut=J.ui.plan.cuts.find(x=>x.line===li && x.layout==='image');
+                    return {
+                      raw:J.ui.project.lyrics,
+                      li,
+                      line:line && {kind:line.kind,text:line.text,imageId:line.imageId},
+                      cut:cut && {layout:cut.layout,imageId:cut.imageId,start:cut.start,end:cut.end},
+                      meta:J.ui.project.images[id],
+                      cached:!!J.getImageAsset(id),
+                      rowText: li>=0 ? J.ui.lineEls[li].querySelector('.txt-edit').value : null,
+                      rowReadonly: li>=0 ? J.ui.lineEls[li].querySelector('.txt-edit').readOnly : null
+                    };
+                  }""", meta["id"])
+                  if img_state["li"] < 0 or not img_state["cut"] or img_state["cut"]["layout"]!="image":
+                      raise RuntimeError(f"image was not planned as a lyric element: {img_state}")
+                  if not img_state["cached"] or img_state["meta"]["name"]!="red-card.png":
+                      raise RuntimeError(f"image asset was not cached/persisted: {img_state}")
+                  if img_state["rowText"]!="🖼 red-card.png" or not img_state["rowReadonly"]:
+                      raise RuntimeError(f"image line-list row is wrong: {img_state}")
+
+                  pixel = await page.evaluate("""id => {
+                    const cut=J.ui.plan.cuts.find(x=>x.imageId===id);
+                    const cv=document.createElement('canvas'); cv.width=640; cv.height=360;
+                    const ctx=cv.getContext('2d');
+                    const R=new J.Renderer();
+                    R.frame(ctx,J.ui.plan,(cut.start+cut.end)/2,{scale:640/J.ui.plan.W,transparent:true,fast:true});
+                    const p=ctx.getImageData(320,180,1,1).data;
+                    return Array.from(p);
+                  }""", meta["id"])
+                  if pixel[0] < 180 or pixel[1] > 100 or pixel[2] > 100 or pixel[3] < 180:
+                      raise RuntimeError(f"image element did not render red at center: {pixel}")
+
+                  payload = await page.evaluate("J.uiApi.projectPayloadForSave()")
+                  assets = payload.get("_imageAssets",[])
+                  if len(assets)!=1 or assets[0].get("id")!=meta["id"] or not assets[0].get("dataUrl","").startswith("data:image/png"):
+                      raise RuntimeError(f"saved project did not embed image bytes: {assets}")
+
+                  # 3) Timeline item click scrolls the left list to that item, but ordinary playback does not.
+                  many="\n".join([f"LINE {i:02d}" for i in range(1,31)])
+                  await page.fill("#lyrics", many)
+                  await page.wait_for_timeout(500)
+                  await page.evaluate("""() => {
+                    const t={}; for(let i=0;i<30;i++) t[i]=i*2;
+                    J.ui.project.timing.lineTimes=t; J.ui.project.timing.snap=false; J.uiApi.replan();
+                    J.ui.timelineZoom=4; J.ui.timelineStart=36; J.ui.need=true;
+                  }""")
+                  await page.wait_for_timeout(180)
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
+                  tl=await page.locator("#timeline").bounding_box()
+                  view=await page.evaluate("""() => {
+                    const D=J.ui.plan.duration, span=D/J.ui.timelineZoom;
+                    const target=J.ui.plan.cuts.find(c=>c.line===22 && c.layout!=='interlude');
+                    return {D,span,start:J.ui.timelineStart,targetTime:(target.start+Math.min(target.end,target.start+1))/2};
+                  }""")
+                  x=tl["x"] + (view["targetTime"]-view["start"])/view["span"]*tl["width"]
+                  y=tl["y"] + tl["height"]*.56
+                  await page.mouse.click(x,y)
+                  await page.wait_for_timeout(150)
+                  jump=await page.evaluate("""() => {
+                    const list=document.querySelector('#lineList'), el=J.ui.lineEls[22];
+                    const lr=list.getBoundingClientRect(), er=el.getBoundingClientRect();
+                    return {scrollTop:list.scrollTop,visible:er.top>=lr.top-2 && er.bottom<=lr.bottom+2,currentTime:J.ui.t};
+                  }""")
+                  if jump["scrollTop"]<=0 or not jump["visible"]:
+                      raise RuntimeError(f"timeline click did not reveal left line item: {jump}")
+
+                  # Playback/seek itself should still leave the list alone.
+                  await page.locator("#lineList").evaluate("el=>el.scrollTop=120")
+                  before_seek=await page.locator("#lineList").evaluate("el=>el.scrollTop")
+                  await page.evaluate("J.uiApi.seek(4.01)")
+                  await page.wait_for_timeout(120)
+                  after_seek=await page.locator("#lineList").evaluate("el=>el.scrollTop")
+                  if abs(after_seek-before_seek)>1:
+                      raise RuntimeError(f"ordinary seek unexpectedly auto-scrolled line list: {before_seek}->{after_seek}")
+
+                  # 4) Reload restores workspace dimensions. The image asset persistence itself is
+                  # tested on the image project separately before replacing lyrics above.
+                  await page.evaluate("J.uiApi.flushSave()")
+                  expected_left=float(left_saved); expected_dock=float(dock_saved)
+                  await page.reload()
+                  await page.wait_for_selector("#timelineDock")
+                  await page.wait_for_function("() => !!J.ui && !!J.ui.plan")
+                  restored=await page.evaluate("""() => ({
+                    left:J.ui.project.ui.leftWidth,
+                    dock:J.ui.project.ui.timelineDockHeight,
+                    leftPx:document.querySelector('.col-left').getBoundingClientRect().width,
+                    dockPx:document.querySelector('#timelineDock').getBoundingClientRect().height
+                  })""")
+                  if abs(float(restored["left"])-expected_left)>1 or abs(float(restored["dock"])-expected_dock)>1:
+                      raise RuntimeError(f"workspace prefs did not persist: {restored}")
+                  if abs(float(restored["leftPx"])-expected_left)>5 or abs(float(restored["dockPx"])-expected_dock)>6:
+                      raise RuntimeError(f"workspace prefs did not apply to layout: {restored}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"left":[left_before,left_after],"dock":[dock_before,dock_after],"image":img_state,"pixel":pixel,"jump":jump,"restored":restored})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
