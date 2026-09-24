@@ -1665,6 +1665,7 @@ function bind() {
       e.preventDefault(); e.stopPropagation();
       drag = false;
       S.timelineActionHover = null;
+      revealLineInList(a.line);
       if (a.action === 'dice') rerollLine(a.line);
       else toggleLineLock(a.line);
       return;
