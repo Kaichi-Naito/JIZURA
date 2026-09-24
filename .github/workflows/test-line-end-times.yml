@@ -153,7 +153,7 @@ jobs:
                     J.ui.project.timing.lineEnds={0:9};
                     J.ui.project.timing.cutBoundaries={'0:0>1:0':4};
                   }""")
-                  await page.click("#btnResetTimes")
+                  await page.evaluate("document.querySelector('#btnResetTimes').click()")
                   await page.wait_for_timeout(180)
                   reset=await page.evaluate("""() => ({
                     starts:J.ui.project.timing.lineTimes,
