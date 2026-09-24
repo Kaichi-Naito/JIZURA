@@ -5,6 +5,9 @@ on:
     branches:
       - fix-timeline-line-jump
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-timeline-line-jump.yml"
 
 permissions:
