@@ -890,18 +890,12 @@ function revealLineInList(lineIndex) {
 }
 function timelineCutAtPointer(ev) {
   const tl = $('timeline'), r = tl.getBoundingClientRect();
-  const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
-  const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
-  for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
-    const h = S.timelineCutHits[i];
-    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
-      // Use the hit record directly. cut.index is a display/stable index and is
-      // not guaranteed to be the current plan.cuts array offset after restoring
-      // a frozen plan or applying timing edits.
-      return h;
-    }
-  }
-  return null;
+  const y = (ev.clientY - r.top) / Math.max(1, r.height);
+  // Upper 30% remains the dedicated seek/line-number area.
+  if (y < 0.30 || y > 0.94) return null;
+  // Resolve from time instead of a rendered rectangle index. This stays correct
+  // for frozen plans, manual timing edits and overlapping/manual-end items.
+  return J.cutAt(S.plan, timelineTimeAt(ev));
 }
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
