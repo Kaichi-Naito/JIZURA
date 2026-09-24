@@ -1,10 +1,13 @@
-name: Test current-line list follow
+name: Test line-list workflow improvements
 
 on:
   push:
     branches:
       - follow-current-line-in-list
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-line-follow.yml"
 
 permissions:
@@ -24,7 +27,7 @@ jobs:
         run: |
           python -m pip install playwright
           python -m playwright install --with-deps chromium
-      - name: Test line-list follow
+      - name: Test line list follow, inline lyric editing, and saved editor height
         shell: bash
         run: |
           python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
@@ -41,6 +44,7 @@ jobs:
                   await page.goto("http://127.0.0.1:8765/")
                   await page.wait_for_selector("#lineList")
 
+                  # 1) Current playback line follows inside the independent line-list scroller.
                   lyrics="\n".join([f"LINE {i:02d}" for i in range(1,31)])
                   await page.fill("#lyrics", lyrics)
                   await page.wait_for_timeout(500)
@@ -59,7 +63,6 @@ jobs:
                   if metrics["scrollHeight"] <= metrics["clientHeight"]:
                       raise RuntimeError(f"line list did not overflow: {metrics}")
 
-                  # Jump from the beginning to line 25. Only the line list should scroll.
                   await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
                   win_before=await page.evaluate("window.scrollY")
                   await page.evaluate("J.uiApi.seek(48.01)")
@@ -80,7 +83,7 @@ jobs:
                   if state["windowY"] != win_before:
                       raise RuntimeError(f"line follow scrolled the page: {win_before}->{state['windowY']}")
 
-                  # Turn time-sort on with intentionally non-lyric-order timestamps.
+                  # Time-sorted mode must also follow the correct original line index.
                   await page.evaluate("""() => {
                     const t={};
                     for(let i=0;i<30;i++) t[i]=(29-i)*2;
@@ -90,7 +93,6 @@ jobs:
                   }""")
                   await page.wait_for_timeout(200)
                   await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
-                  # In time order, original line 5 is far down the list (time=50).
                   await page.evaluate("J.uiApi.seek(50.01)")
                   await page.wait_for_timeout(150)
                   sorted_state=await page.evaluate("""() => {
@@ -107,9 +109,65 @@ jobs:
                   if sorted_state["scrollTop"] <= 0 or not sorted_state["visible"] or not sorted_state["current"] or sorted_state["pressed"]!="true":
                       raise RuntimeError(f"time-sorted follow failed: {sorted_state}")
 
+                  # 2) Inline lyric editing preserves source syntax and edits the correct source line.
+                  await page.evaluate("""() => {
+                    J.ui.project.lyrics='FIRST\n[00:05.00]夜明け/覚えてる|NOTE\nTHIRD';
+                    J.ui.project.timing.lineTimes={0:9,1:1,2:5};
+                    J.ui.project.ui.lineSortByTime=true;
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(220)
+                  # Find the row for original parsed line index 1, regardless of visual sort order.
+                  edit=page.locator("#lineList .ln").filter(has=page.locator('input.txt-edit[value="夜明け/覚えてる|NOTE"]')).locator(".txt-edit")
+                  if await edit.count()!=1:
+                      raise RuntimeError("inline lyric editor did not expose the source syntax")
+                  await edit.fill("夜明け/変えた|NOTE")
+                  await edit.press("Enter")
+                  await page.wait_for_timeout(260)
+                  lyric_state=await page.evaluate("""() => ({
+                    raw:J.ui.project.lyrics,
+                    textarea:document.querySelector('#lyrics').value,
+                    parsed:J.parseLyrics(J.ui.project.lyrics).lines.map(x=>x.text)
+                  })""")
+                  expected_raw="FIRST\n[00:05.00]夜明け/変えた|NOTE\nTHIRD"
+                  if lyric_state["raw"]!=expected_raw or lyric_state["textarea"]!=expected_raw:
+                      raise RuntimeError(f"inline edit did not update source/main textarea correctly: {lyric_state}")
+                  if "夜明け変えた" not in lyric_state["parsed"]:
+                      raise RuntimeError(f"inline edit did not replan the edited lyric: {lyric_state}")
+
+                  # 3) User-resized lyric textarea height is stored in project UI and restored after reload.
+                  await page.evaluate("""() => {
+                    const el=document.querySelector('#lyrics');
+                    el.style.height='336px';
+                  }""")
+                  await page.wait_for_timeout(650)
+                  height_state=await page.evaluate("""() => ({
+                    saved:J.ui.project.ui && J.ui.project.ui.lyricsHeight,
+                    actual:Math.round(document.querySelector('#lyrics').getBoundingClientRect().height)
+                  })""")
+                  if height_state["saved"] is None or abs(float(height_state["saved"])-336)>3:
+                      raise RuntimeError(f"lyrics height was not saved: {height_state}")
+                  payload_height=await page.evaluate("async () => (await J.uiApi.projectPayloadForSave()).ui.lyricsHeight")
+                  if abs(float(payload_height)-float(height_state["saved"]))>2:
+                      raise RuntimeError(f"saved project payload lost lyric height: payload={payload_height}, state={height_state}")
+
+                  await page.evaluate("J.uiApi.flushSave()")
+                  await page.reload()
+                  await page.wait_for_selector("#lyrics")
+                  await page.wait_for_function("() => !!J.ui && !!J.ui.plan")
+                  reload_height=await page.evaluate("""() => ({
+                    saved:J.ui.project.ui && J.ui.project.ui.lyricsHeight,
+                    actual:Math.round(document.querySelector('#lyrics').getBoundingClientRect().height),
+                    raw:J.ui.project.lyrics
+                  })""")
+                  if reload_height["saved"] is None or abs(float(reload_height["actual"])-float(reload_height["saved"]))>3:
+                      raise RuntimeError(f"lyrics height did not restore after reload: {reload_height}")
+                  if reload_height["raw"]!=expected_raw:
+                      raise RuntimeError(f"inline-edited lyric did not survive reload: {reload_height}")
+
                   if errors:
                       raise RuntimeError("page errors: "+" | ".join(errors))
-                  print({"ok":True,"normal":state,"sorted":sorted_state})
+                  print({"ok":True,"follow":state,"sortedFollow":sorted_state,"inlineEdit":lyric_state,"height":height_state,"reloadHeight":reload_height})
                   await browser.close()
 
           asyncio.run(main())
