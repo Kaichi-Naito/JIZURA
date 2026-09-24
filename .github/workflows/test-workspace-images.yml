@@ -123,6 +123,23 @@ jobs:
                   if len(assets)!=1 or assets[0].get("id")!=meta["id"] or not assets[0].get("dataUrl","").startswith("data:image/png"):
                       raise RuntimeError(f"saved project did not embed image bytes: {assets}")
 
+                  # Simulate opening the portable project with no in-memory image cache.
+                  restored_image = await page.evaluate("""async payload => {
+                    const id=payload._imageAssets[0].id;
+                    J.removeImageAsset(id);
+                    await J.uiApi.applyProjectData(payload);
+                    const parsed=J.parseLyrics(J.ui.project.lyrics);
+                    const li=parsed.lines.findIndex(x=>x.kind==='image' && x.imageId===id);
+                    return {
+                      cached:!!J.getImageAsset(id),
+                      li,
+                      cut:!!J.ui.plan.cuts.find(c=>c.line===li && c.layout==='image' && c.imageId===id),
+                      name:J.ui.project.images[id] && J.ui.project.images[id].name
+                    };
+                  }""", payload)
+                  if not restored_image["cached"] or restored_image["li"]<0 or not restored_image["cut"] or restored_image["name"]!="red-card.png":
+                      raise RuntimeError(f"portable project did not restore embedded image: {restored_image}")
+
                   # 3) Timeline item click scrolls the left list to that item, but ordinary playback does not.
                   many="\n".join([f"LINE {i:02d}" for i in range(1,31)])
                   await page.fill("#lyrics", many)
@@ -192,7 +209,7 @@ jobs:
 
                   if errors:
                       raise RuntimeError("page errors: "+" | ".join(errors))
-                  print({"ok":True,"left":[left_before,left_after],"dock":[dock_before,dock_after],"image":img_state,"pixel":pixel,"jump":jump,"restored":restored})
+                  print({"ok":True,"left":[left_before,left_after],"dock":[dock_before,dock_after],"image":img_state,"portableImage":restored_image,"pixel":pixel,"jump":jump,"restored":restored})
                   await browser.close()
 
           asyncio.run(main())
