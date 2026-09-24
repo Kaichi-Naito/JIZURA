@@ -356,6 +356,7 @@ function remapLineIndexedState(oldRaw, newRaw) {
     return out;
   };
   S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  S.project.timing.lineEnds = remap((S.project.timing || {}).lineEnds || {});
   const oldToNew = {};
   for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
   const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
@@ -853,6 +854,18 @@ function replaceLyricLineFromList(lineIndex, newBody) {
   replan();
   return true;
 }
+function clearLineEndBoundaryOverrides(lineIndex) {
+  const map = S.project.timing && S.project.timing.cutBoundaries;
+  if (!map || !S.plan) return;
+  const cuts = (S.plan.cuts || []).slice().sort((a, b) => a.start - b.start);
+  for (let j = 1; j < cuts.length; j++) {
+    const left = cuts[j - 1], right = cuts[j];
+    if (left.line !== lineIndex) continue;
+    if (right.line === lineIndex && right.layout !== 'interlude' && left.layout !== 'interlude') continue;
+    const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
+    if (key) delete map[key];
+  }
+}
 function rerollLine(lineIndex) {
   const line = S.plan.lines[lineIndex]; if (!line) return;
   const cur = (S.project.overrides || {})[lineIndex] || {};
@@ -884,11 +897,14 @@ function renderLines() {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
+    const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
     const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
     const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
-      <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
+      <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
+      <span class="time-arrow" aria-hidden="true">→</span>
+      <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
       <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
@@ -901,10 +917,23 @@ function renderLines() {
       </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
-    li.querySelector('.time').addEventListener('change', e => {
+    li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
-      if (isFinite(v)) S.project.timing.lineTimes[i] = Math.max(0, v); else delete S.project.timing.lineTimes[i];
+      if (!S.project.timing.lineEnds) S.project.timing.lineEnds = {};
+      if (isFinite(v)) {
+        const s2 = Math.max(0, v);
+        S.project.timing.lineTimes[i] = s2;
+        if (S.project.timing.lineEnds[i] != null && +S.project.timing.lineEnds[i] <= s2) S.project.timing.lineEnds[i] = +(s2 + 0.05).toFixed(3);
+      } else delete S.project.timing.lineTimes[i];
+      replan();
+    });
+    li.querySelector('.end-time').addEventListener('change', e => {
+      if (!S.project.timing.lineEnds) S.project.timing.lineEnds = {};
+      clearLineEndBoundaryOverrides(i);
+      const raw = e.target.value.trim(), v = parseFloat(raw);
+      if (!raw || !isFinite(v)) delete S.project.timing.lineEnds[i];
+      else S.project.timing.lineEnds[i] = +Math.max(ln.start + 0.05, v).toFixed(3);
       replan();
     });
     const txtEdit = li.querySelector('.txt-edit');
