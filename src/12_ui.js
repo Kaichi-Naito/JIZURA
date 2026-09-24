@@ -813,6 +813,7 @@ function replaceLyricLineFromList(lineIndex, newBody) {
   return true;
 }
 function renderLines() {
+  S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
   const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
@@ -825,7 +826,7 @@ function renderLines() {
   sortBtn.title = S.lineSortByTime ? '歌詞の元の行順に戻す' : 'タイムコードの早い順（昇順）に並べる';
   rows.forEach(({ ln, i }) => {
     const o = ov[i] || {};
-    const li = document.createElement('li'); li.className = 'ln';
+    const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
