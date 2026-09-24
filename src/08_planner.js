@@ -22,7 +22,7 @@ J.defaultProject = () => ({
   aspect: '16:9', res: 1080, fps: 24,
   fx: { motion: 0.7, glitch: 0.55, chroma: 0.7, decor: 0.5, density: 0.55, texture: 0.6, flash: true, onTwos: true, koma: 12, hud: 'auto', bgSwitch: 0.35 },
   enabled: Object.fromEntries(J.GROUP_KEYS.map(g => [g, Object.fromEntries(J.order(g).map(k => [k, true]))])),
-  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, lineScale: 1 },
+  timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, cutBoundaries: {}, lineScale: 1 },
   overrides: {},
   colors: { enabled: false },
   fonts: {},
@@ -292,10 +292,11 @@ J.plan = (project, audio) => {
           if (prevCut.line === li) { prevCut.exit = 'cut'; prevCut.outDur = 0; }
         }
       }
-      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
+      const cut = makeCut({ text: txt, lineText: ln.text, note: ln.note, line: li, lineCut: k, start: cs, end: ce, layout, enter, exit, hold, inDur, outDur, params, decor, scheme: sch, styleKey: lineStyleKey, seed: J.h(lineSeed, k, 17), emph, recap: !!u.recap, words: J.chunkText(txt), stagger: rng.range(0.025, 0.06),
         treat, treatP, bg, bgP: bg === lineBg ? lineBgP : {}, cam, camP, trans, transP, transDur });
       plan.cuts.push(cut);
       history.push({ layout, enter, exit, hold, treat, cam, trans, decor: decor.map(d => d.id) });
+      const eventStartIndex = plan.events.length;
       // events at cut start
       // events at cut start — durations are on a 24fps timebase so every output rate looks the same
       const g = fx.glitch * (lineSt.glitchBoost || 1);
@@ -316,14 +317,21 @@ J.plan = (project, audio) => {
         if (pick) { const D2 = J.FXE[pick]; const d = (D2.dur || 4) * F; addEvent(cs - (D2.pre ? D2.pre * F : 0), pick, (D2.amp || 1) * (0.7 + 0.5 * g + (emph ? 0.3 : 0)), d); fxHistory.push(pick); }
       }
       if (dur > 1.1) { const pick = pickFx(rng, lineSt, en, fx, emph, fxHistory, 'mid'); if (pick) { const D2 = J.FXE[pick]; addEvent(cs + rng.range(0.4, 0.75) * dur, pick, (D2.amp || 1) * (0.5 + 0.4 * g), (D2.dur || 3) * F); } }
+      for (let ei = eventStartIndex; ei < plan.events.length; ei++) {
+        const ev = plan.events[ei];
+        ev.line = li; ev.lineCut = k;
+        ev.cutRel = dur > 1e-6 ? (ev.t - cs) / dur : 0;
+      }
     });
     // interlude in long gaps
     const nextStart = li < parsed.lines.length - 1 ? tm.starts[li + 1] : null;
     if (nextStart != null && nextStart - visEnd > 1.3) {
       const r2 = J.rng(J.h(lineSeed, 404));
-      plan.cuts.push(makeCut({ text: title || '', lineText: '', line: li, start: visEnd, end: nextStart, layout: 'interlude', enter: 'blur', exit: 'blur', hold: 'still', inDur: 0.3, outDur: 0.3, params: J.LAYOUTS.interlude.plan(r2), decor: pickDecor(r2, lineSt, en, Object.assign({}, fx, { decor: 1 }), 'interlude'), scheme: schemeIdx, styleKey: lineStyleKey, seed: J.h(lineSeed, 405) }));
+      plan.cuts.push(makeCut({ text: title || '', lineText: '', line: li, lineCut: -1, start: visEnd, end: nextStart, layout: 'interlude', enter: 'blur', exit: 'blur', hold: 'still', inDur: 0.3, outDur: 0.3, params: J.LAYOUTS.interlude.plan(r2), decor: pickDecor(r2, lineSt, en, Object.assign({}, fx, { decor: 1 }), 'interlude'), scheme: schemeIdx, styleKey: lineStyleKey, seed: J.h(lineSeed, 405) }));
     }
   });
+  plan.cuts.sort((a, b) => a.start - b.start);
+  if (J.applyCutBoundaries) J.applyCutBoundaries(plan, project.timing && project.timing.cutBoundaries);
   plan.cuts.sort((a, b) => a.start - b.start);
   plan.cuts.forEach((c, i) => { c.index = i; });
   plan.events.sort((a, b) => a.t - b.t);
@@ -337,6 +345,54 @@ function makeCut(o) {
   c.dur = c.end - c.start;
   return c;
 }
+
+J.cutBoundaryKey = (left, right) => {
+  if (!left || !right || left.line == null || right.line == null) return null;
+  if (!(left.lineCut >= 0) || !(right.lineCut >= 0)) return null;
+  return left.line + ':' + left.lineCut + '>' + right.line + ':' + right.lineCut;
+};
+function fitCutDur(c) {
+  c.dur = Math.max(0.001, c.end - c.start);
+  if (c.inDur > c.dur * 0.72) c.inDur = Math.max(0.01, c.dur * 0.72);
+  if (c.outDur > c.dur * 0.72) c.outDur = Math.max(0, c.dur * 0.72);
+  if (c.inDur + c.outDur > c.dur * 0.94) {
+    const f = c.dur * 0.94 / Math.max(0.001, c.inDur + c.outDur);
+    c.inDur *= f; c.outDur *= f;
+  }
+  if (c.transDur) c.transDur = Math.min(c.transDur, Math.max(0.06, c.dur * 0.45));
+}
+J.setCutBoundaryTime = (plan, left, right, value) => {
+  if (!plan || !left || !right) return null;
+  const span = Math.max(0.001, right.end - left.start);
+  const minDur = Math.min(0.22, Math.max(0.06, span * 0.2));
+  const lo = left.start + minDur, hi = right.end - minDur;
+  if (!(hi > lo)) return null;
+  const oldRightStart = right.start, t = J.clamp(+value, lo, hi);
+  left.end = t; right.start = t;
+  fitCutDur(left); fitCutDur(right);
+
+  // Move effects with their owning cut while preserving their relative position.
+  for (const ev of plan.events || []) {
+    if (ev.line === left.line && ev.lineCut === left.lineCut && Number.isFinite(ev.cutRel)) ev.t = left.start + ev.cutRel * left.dur;
+    else if (ev.line === right.line && ev.lineCut === right.lineCut && Number.isFinite(ev.cutRel)) ev.t = right.start + ev.cutRel * right.dur;
+  }
+
+  if (left.line !== right.line) {
+    const ll = plan.lines && plan.lines[left.line], rl = plan.lines && plan.lines[right.line];
+    if (ll && left.lineCut >= 0) { ll.end = t; ll.visEnd = Math.max(ll.start, t); }
+    if (rl && right.lineCut === 0) rl.start = t;
+  }
+  if (plan.events) plan.events.sort((a, b) => a.t - b.t);
+  return { time: t, delta: t - oldRightStart };
+};
+J.applyCutBoundaries = (plan, map) => {
+  if (!plan || !map || typeof map !== 'object') return;
+  const cuts = (plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).sort((a, b) => a.start - b.start);
+  for (let i = 1; i < cuts.length; i++) {
+    const left = cuts[i - 1], right = cuts[i], key = J.cutBoundaryKey(left, right);
+    if (key && Number.isFinite(+map[key])) J.setCutBoundaryTime(plan, left, right, +map[key]);
+  }
+};
 function partition(chunks, k) {
   const lens = chunks.map(c => [...c].length + 1);
   const tot = lens.reduce((a, b) => a + b, 0), target = tot / k;

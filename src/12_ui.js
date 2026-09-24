@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -60,9 +60,89 @@ function setBadges(d) {
 }
 function loadLocal() { try { const s = localStorage.getItem(LS_KEY); if (s) return mergeProject(JSON.parse(s)); } catch (e) {} return mergeProject(null); }
 let saveTimer = 0;
-function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 700); }
-function flushSave() { clearTimeout(saveTimer); try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {} }
+function autosave() { clearTimeout(saveTimer); scheduleEditorHistory(); saveTimer = setTimeout(flushSave, 700); }
+function flushSave() {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(LS_KEY, JSON.stringify(S.project)); } catch (e) {}
+  scheduleEditorHistory();
+}
 window.addEventListener('pagehide', () => { if (S.project) flushSave(); });
+
+/* ---------------- editor-wide undo / redo ----------------
+   Ctrl/Cmd+Z belongs to JIZURA as a whole, even while a text/number input is focused. */
+const EH = { list: [], i: -1 };
+let editorHistTimer = 0, editorHistoryApplying = false;
+function editorSnap() {
+  if (!S.project) return '';
+  const p = JSON.parse(JSON.stringify(S.project));
+  delete p.planSnapshot; // large derived data; deterministic project inputs are enough inside one app version
+  return JSON.stringify(p);
+}
+function recordEditorHistory(force = false) {
+  clearTimeout(editorHistTimer);
+  if (editorHistoryApplying || !S.project) return;
+  const s = editorSnap();
+  if (!force && EH.i >= 0 && EH.list[EH.i] === s) return;
+  EH.list = EH.list.slice(0, EH.i + 1);
+  if (EH.list[EH.list.length - 1] !== s) EH.list.push(s);
+  EH.i = EH.list.length - 1;
+  if (EH.list.length > 80) {
+    const n = EH.list.length - 80;
+    EH.list.splice(0, n); EH.i -= n;
+  }
+}
+function scheduleEditorHistory() {
+  if (editorHistoryApplying || !S.project) return;
+  clearTimeout(editorHistTimer);
+  editorHistTimer = setTimeout(() => recordEditorHistory(), 420);
+}
+function resetEditorHistory() {
+  clearTimeout(editorHistTimer);
+  EH.list = []; EH.i = -1;
+  recordEditorHistory(true);
+}
+function applyEditorHistory(index, label) {
+  if (index < 0 || index >= EH.list.length) return false;
+  editorHistoryApplying = true;
+  try {
+    pause();
+    S.project = mergeProject(JSON.parse(EH.list[index]));
+    fontKey = '';
+    syncUI(); replan(); flushSave();
+    toast(label);
+    return true;
+  } finally {
+    editorHistoryApplying = false;
+  }
+}
+function editorUndo() {
+  clearTimeout(editorHistTimer);
+  clearTimeout(replanTimer);
+  const cur = editorSnap();
+  if (EH.i < 0) resetEditorHistory();
+  if (EH.list[EH.i] !== cur) {
+    EH.list = EH.list.slice(0, EH.i + 1);
+    EH.list.push(cur); EH.i = EH.list.length - 1;
+  }
+  if (EH.i <= 0) return false;
+  EH.i--;
+  return applyEditorHistory(EH.i, '元に戻しました');
+}
+function editorRedo() {
+  clearTimeout(editorHistTimer);
+  clearTimeout(replanTimer);
+  const cur = editorSnap();
+  if (EH.i < 0) resetEditorHistory();
+  if (EH.list[EH.i] !== cur) {
+    // A new edit after Undo starts a new branch; the old Redo chain is discarded.
+    EH.list = EH.list.slice(0, EH.i + 1);
+    EH.list.push(cur); EH.i = EH.list.length - 1;
+    return false;
+  }
+  if (EH.i >= EH.list.length - 1) return false;
+  EH.i++;
+  return applyEditorHistory(EH.i, 'やり直しました');
+}
 
 /* ---------------- audio persistence ----------------
    Browsers do not expose a reusable full local file path from <input type=file>.
@@ -275,6 +355,17 @@ function remapLineIndexedState(oldRaw, newRaw) {
     return out;
   };
   S.project.timing.lineTimes = remap((S.project.timing || {}).lineTimes || {});
+  const oldToNew = {};
+  for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
+  const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
+  for (const [key, value] of Object.entries(oldBounds)) {
+    const m = key.match(/^(-?\d+):(\d+)>(-?\d+):(\d+)$/);
+    if (!m) continue;
+    const l = oldToNew[m[1]], r = oldToNew[m[3]];
+    if (l == null || r == null) continue;
+    newBounds[l + ':' + m[2] + '>' + r + ':' + m[4]] = value;
+  }
+  S.project.timing.cutBoundaries = newBounds;
   S.project.overrides = remap(S.project.overrides || {});
 }
 
@@ -299,6 +390,31 @@ function planInputKey(project) {
 }
 function plainPlan(plan) {
   return JSON.parse(JSON.stringify(plan, (k, v) => (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(v)) ? Array.from(v) : v));
+}
+function ensureLineCutOrdinals(plan) {
+  const counts = {};
+  const cuts = [];
+  for (const cut of (plan && plan.cuts) || []) {
+    if (!(cut.line >= 0) || cut.layout === 'interlude') continue;
+    const n = counts[cut.line] || 0;
+    if (!(cut.lineCut >= 0)) cut.lineCut = n;
+    counts[cut.line] = Math.max(n + 1, cut.lineCut + 1);
+    cuts.push(cut);
+  }
+  // Upgrade snapshots made before draggable boundaries existed. Assign older
+  // effect events to the closest cut start so they move with that cut.
+  for (const ev of (plan && plan.events) || []) {
+    if (Number.isFinite(ev.cutRel) && ev.line != null && ev.lineCut != null) continue;
+    let best = null, bd = Infinity;
+    for (const cut of cuts) {
+      const d = Math.abs(ev.t - cut.start);
+      if (d < bd) { bd = d; best = cut; }
+    }
+    if (best) {
+      ev.line = best.line; ev.lineCut = best.lineCut;
+      ev.cutRel = best.dur > 1e-6 ? (ev.t - best.start) / best.dur : 0;
+    }
+  }
 }
 function storePlanSnapshot() {
   if (!S.project || !S.plan) return;
@@ -331,6 +447,7 @@ function restorePlanSnapshot() {
   try {
     S.layoutPreview = null;
     S.plan = plainPlan(snap.plan);
+    ensureLineCutOrdinals(S.plan);
     S.activePlanKey = snap.inputKey;
     finishPlanUi(false);
     return true;
@@ -515,6 +632,16 @@ function drawTimeline() {
     x.fillStyle = '#5d5a63'; x.fillRect(lx, 0, 1, top);
     x.fillStyle = '#8e8a94'; x.fillText(String(ln.index + 1).padStart(2, '0'), lx + 3 * dpr, 12 * dpr);
   }
+  const hb = S.timelineBoundaryDrag ? S.timelineBoundaryDrag.boundary : S.timelineBoundaryHover;
+  if (hb) {
+    const bt = hb.right.start;
+    if (bt >= V.start && bt <= V.end) {
+      const bx = X(bt);
+      x.fillStyle = S.timelineBoundaryDrag ? '#f5a50c' : 'rgba(245,165,12,0.78)';
+      x.fillRect(Math.round(bx) - Math.max(1, dpr), top - 3 * dpr, Math.max(2, 2 * dpr), bot - top + 6 * dpr);
+      x.fillRect(Math.round(bx) - 4 * dpr, top - 6 * dpr, 8 * dpr, 4 * dpr);
+    }
+  }
   if (S.t >= V.start && S.t <= V.end) {
     const px = X(S.t);
     x.fillStyle = '#f5a50c'; x.fillRect(Math.round(px) - dpr, 0, 2 * dpr, h);
@@ -527,10 +654,66 @@ function drawTimeline() {
     x.textAlign = 'left';
   }
 }
-function timelineSeek(ev) {
+function timelineEditableBoundaries() {
+  ensureLineCutOrdinals(S.plan);
+  const cuts = (S.plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).slice().sort((a, b) => a.start - b.start);
+  const out = [];
+  for (let i = 1; i < cuts.length; i++) {
+    const left = cuts[i - 1], right = cuts[i];
+    if (Math.abs(left.end - right.start) > 0.07) continue;
+    if (right.end - left.start < 0.14) continue;
+    const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
+    if (key) out.push({ left, right, key });
+  }
+  return out;
+}
+function timelineBoundaryAt(ev, radius = 7) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect(), V = timelineView();
+  let best = null, bestPx = radius + 1;
+  for (const b of timelineEditableBoundaries()) {
+    if (b.right.start < V.start || b.right.start > V.end) continue;
+    const px = (b.right.start - V.start) / V.span * r.width;
+    const d = Math.abs((ev.clientX - r.left) - px);
+    if (d <= radius && d < bestPx) { best = b; bestPx = d; }
+  }
+  return best;
+}
+function timelineTimeAt(ev) {
   const r = $('timeline').getBoundingClientRect(), V = timelineView();
   const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
-  seek(V.start + p * V.span);
+  return V.start + p * V.span;
+}
+function timelineSeek(ev) {
+  seek(timelineTimeAt(ev));
+}
+function updateBoundaryDrag(ev) {
+  const d = S.timelineBoundaryDrag;
+  if (!d) return;
+  const result = J.setCutBoundaryTime && J.setCutBoundaryTime(S.plan, d.boundary.left, d.boundary.right, timelineTimeAt(ev));
+  if (!result) return;
+  const t = +result.time.toFixed(4);
+  if (!S.project.timing.cutBoundaries) S.project.timing.cutBoundaries = {};
+  S.project.timing.cutBoundaries[d.boundary.key] = t;
+  if (d.boundary.left.line !== d.boundary.right.line && d.boundary.right.lineCut === 0) {
+    if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
+    S.project.timing.lineTimes[d.boundary.right.line] = t;
+  }
+  S.t = t;
+  updateTimeUI();
+  drawTimeline();
+  S.need = true;
+}
+function finishBoundaryDrag() {
+  if (!S.timelineBoundaryDrag) return;
+  S.timelineBoundaryDrag = null;
+  S.timelineBoundaryHover = null;
+  $('timeline').style.cursor = 'pointer';
+  storePlanSnapshot();
+  autosave();
+  renderLines();
+  updateCutInfo();
+  drawTimeline();
+  S.need = true;
 }
 function timelineWheel(ev) {
   ev.preventDefault();
@@ -1088,9 +1271,49 @@ function bind() {
   sc.addEventListener('change', () => { S.scrubbing = false; });
   const tl = $('timeline');
   let drag = false;
-  tl.addEventListener('pointerdown', e => { drag = true; tl.setPointerCapture(e.pointerId); timelineSeek(e); });
-  tl.addEventListener('pointermove', e => { if (drag) timelineSeek(e); });
-  tl.addEventListener('pointerup', () => { drag = false; });
+  tl.addEventListener('pointerdown', e => {
+    const b = timelineBoundaryAt(e, 9);
+    if (b) {
+      e.preventDefault();
+      if (S.playing) pause();
+      drag = false;
+      S.timelineBoundaryHover = b;
+      S.timelineBoundaryDrag = { boundary: b, pointerId: e.pointerId };
+      tl.style.cursor = 'col-resize';
+      tl.setPointerCapture(e.pointerId);
+      updateBoundaryDrag(e);
+      return;
+    }
+    drag = true;
+    S.timelineBoundaryHover = null;
+    tl.style.cursor = 'pointer';
+    tl.setPointerCapture(e.pointerId);
+    timelineSeek(e);
+  });
+  tl.addEventListener('pointermove', e => {
+    if (S.timelineBoundaryDrag) { updateBoundaryDrag(e); return; }
+    if (drag) { timelineSeek(e); return; }
+    const b = timelineBoundaryAt(e, 8);
+    const old = S.timelineBoundaryHover && S.timelineBoundaryHover.key;
+    const next = b && b.key;
+    S.timelineBoundaryHover = b;
+    tl.style.cursor = b ? 'col-resize' : 'pointer';
+    if (old !== next) drawTimeline();
+  });
+  tl.addEventListener('pointerup', e => {
+    if (S.timelineBoundaryDrag) {
+      try { if (tl.hasPointerCapture(e.pointerId)) tl.releasePointerCapture(e.pointerId); } catch (err) {}
+      finishBoundaryDrag();
+      return;
+    }
+    drag = false;
+  });
+  tl.addEventListener('pointercancel', () => { drag = false; finishBoundaryDrag(); });
+  tl.addEventListener('pointerleave', () => {
+    if (!drag && !S.timelineBoundaryDrag && S.timelineBoundaryHover) {
+      S.timelineBoundaryHover = null; tl.style.cursor = 'pointer'; drawTimeline();
+    }
+  });
   tl.addEventListener('wheel', timelineWheel, { passive: false });
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
@@ -1187,11 +1410,23 @@ function bind() {
     try {
       $('audioName').textContent = 'プロジェクトを読み込み中…';
       await applyProjectData(JSON.parse(await f.text()));
+      resetEditorHistory();
     }
     catch (err) { showMsg('プロジェクトを読み込めませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3500); }
     e.target.value = '';
   });
   document.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && !e.altKey && e.code === 'KeyZ') {
+      e.preventDefault();
+      e.shiftKey ? editorRedo() : editorUndo();
+      return;
+    }
+    if (mod && !e.altKey && e.code === 'KeyY') {
+      e.preventDefault();
+      editorRedo();
+      return;
+    }
     const tag = (e.target && e.target.tagName) || '';
     const typing = /INPUT|TEXTAREA|SELECT/.test(tag) && e.target.type !== 'range' && e.target.type !== 'checkbox';
     if (S.tap && (e.code === 'Space' || e.code === 'Enter') && !typing) { e.preventDefault(); tapNow(); return; }
@@ -1246,6 +1481,7 @@ async function boot() {
   }
   let mode = 'easy'; try { mode = localStorage.getItem('jizura.mode') || 'easy'; } catch (e) {}
   setMode(mode); commit();
+  resetEditorHistory();
   // open on a representative frame (end of the first cut's entrance)
   const c0 = S.plan.cuts.find(c => c.line >= 0);
   if (c0) seek(c0.start + Math.min(c0.dur * 0.6, c0.inDur + 0.25));
@@ -1254,5 +1490,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory };
 })();
