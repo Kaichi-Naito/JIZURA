@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineCutHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -742,6 +742,7 @@ function drawTimeline() {
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d'), V = timelineView(), X = t => (t - V.start) / V.span * w;
   S.timelineActionHits = [];
+  S.timelineCutHits = [];
   x.fillStyle = '#131316'; x.fillRect(0, 0, w, h);
   if (S.audio && S.audio.peaks) {
     const pk = S.audio.peaks, n = pk.length, sd = S.audio.duration;
@@ -765,6 +766,7 @@ function drawTimeline() {
   for (const cut of S.plan.cuts) {
     if (cut.end <= V.start || cut.start >= V.end) continue;
     const x0 = X(Math.max(cut.start, V.start)), x1 = X(Math.min(cut.end, V.end));
+    S.timelineCutHits.push({ x: x0, y: top, w: Math.max(1, x1 - x0), h: bot - top, line: cut.line, cutIndex: cut.index, start: cut.start, end: cut.end });
     const hue = layoutHue(cut.layout);
     x.fillStyle = `hsla(${hue},70%,58%,0.28)`; x.fillRect(x0, top, Math.max(1, x1 - x0 - 1), bot - top);
     x.fillStyle = `hsla(${hue},80%,62%,0.95)`; x.fillRect(x0, top, Math.max(1, 2 * dpr), bot - top);
@@ -886,9 +888,15 @@ function revealLineInList(lineIndex) {
 }
 function timelineCutAtPointer(ev) {
   const tl = $('timeline'), r = tl.getBoundingClientRect();
-  const top = r.top + r.height * 0.30, bottom = r.bottom - 8;
-  if (ev.clientY < top || ev.clientY > bottom) return null;
-  return J.cutAt(S.plan, timelineTimeAt(ev));
+  const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
+  const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
+  for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
+    const h = S.timelineCutHits[i];
+    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
+      return S.plan.cuts[h.cutIndex] || null;
+    }
+  }
+  return null;
 }
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
