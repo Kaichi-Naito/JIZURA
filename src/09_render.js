@@ -10,9 +10,11 @@ const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Mat
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
-  if (ans < 0) return null;
-  const c = cs[ans];
-  return t < c.end ? c : null;
+  // Plans normally have no overlap, but a manual line end may deliberately
+  // extend an earlier item past later starts. Pick the latest-started cut that
+  // is still alive; if newer cuts have already ended, fall back to the older one.
+  for (let i = ans; i >= 0; i--) if (cs[i].start <= t && t < cs[i].end) return cs[i];
+  return null;
 };
 J.cutsAt = (plan, t) => (plan.cuts || []).filter(c => c.start <= t && t < c.end);
 
