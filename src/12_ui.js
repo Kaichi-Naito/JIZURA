@@ -1413,7 +1413,12 @@ function bind() {
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
-  $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
+  $('btnResetTimes').addEventListener('click', () => {
+    S.project.timing.lineTimes = {};
+    S.project.timing.lineEnds = {};
+    S.project.timing.cutBoundaries = {};
+    replan();
+  });
   $('btnSortLines').addEventListener('click', () => {
     S.lineSortByTime = !S.lineSortByTime;
     S.project.ui = Object.assign({}, S.project.ui || {}, { lineSortByTime: S.lineSortByTime });
