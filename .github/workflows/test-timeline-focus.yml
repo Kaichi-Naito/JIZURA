@@ -88,6 +88,18 @@ jobs:
               await page.wait_for_timeout(180)
               await page.locator("#lineList").evaluate("el=>el.scrollTop=el.scrollHeight")
               before=await page.locator("#lineList").evaluate("el=>el.scrollTop")
+              direct=await page.evaluate("""() => {
+                const l=document.querySelector('#lineList');
+                const e=J.ui.lineEls[0];
+                const lr=l.getBoundingClientRect(),er=e.getBoundingClientRect();
+                const b=l.scrollTop;
+                J.uiApi.revealLineInList(0);
+                return {before:b,after:l.scrollTop,lrTop:lr.top,lrBottom:lr.bottom,erTop:er.top,erBottom:er.bottom,offsetTop:e.offsetTop,clientHeight:l.clientHeight,scrollHeight:l.scrollHeight};
+              }""")
+              print({"directReveal":direct})
+              assert direct["after"] < direct["before"] - 20, direct
+              await page.locator("#lineList").evaluate("el=>el.scrollTop=el.scrollHeight")
+              before=await page.locator("#lineList").evaluate("el=>el.scrollTop")
               hit=await page.evaluate("""() => {
                 const h=J.ui.timelineCutHits.find(h=>{const c=J.ui.plan.cuts[h.cutIndex];return c&&c.line===0;});
                 return h&&{x:h.x,y:h.y,w:h.w,h:h.h};
