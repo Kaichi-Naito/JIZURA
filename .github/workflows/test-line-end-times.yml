@@ -132,7 +132,7 @@ jobs:
 
                   # End times follow the lyric item when a new line is inserted before it.
                   await page.evaluate("""() => {
-                    J.ui.project.lyrics='FIRST\nSECOND';
+                    J.ui.project.lyrics=['FIRST','SECOND'].join(String.fromCharCode(10));
                     J.ui.project.timing.lineTimes={0:1,1:3};
                     J.ui.project.timing.lineEnds={1:12.5};
                     J.uiApi.replan();
