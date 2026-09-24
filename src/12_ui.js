@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -619,6 +619,7 @@ function drawTimeline() {
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d'), V = timelineView(), X = t => (t - V.start) / V.span * w;
+  S.timelineActionHits = [];
   x.fillStyle = '#131316'; x.fillRect(0, 0, w, h);
   if (S.audio && S.audio.peaks) {
     const pk = S.audio.peaks, n = pk.length, sd = S.audio.duration;
@@ -645,10 +646,39 @@ function drawTimeline() {
     const hue = layoutHue(cut.layout);
     x.fillStyle = `hsla(${hue},70%,58%,0.28)`; x.fillRect(x0, top, Math.max(1, x1 - x0 - 1), bot - top);
     x.fillStyle = `hsla(${hue},80%,62%,0.95)`; x.fillRect(x0, top, Math.max(1, 2 * dpr), bot - top);
-    if (x1 - x0 > 34 * dpr) {
+    const cutW = x1 - x0;
+    if (cutW > 34 * dpr) {
       x.fillStyle = 'rgba(236,231,225,0.85)'; x.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono') || 'monospace'}`;
       x.save(); x.beginPath(); x.rect(x0, top, x1 - x0 - 3, bot - top); x.clip();
       x.fillText((J.LAYOUTS[cut.layout] || {}).name || cut.layout, x0 + 5 * dpr, top + 13 * dpr); x.restore();
+    }
+    if (cut.line >= 0 && cutW >= 86 * dpr) {
+      const size = 16 * dpr, gap = 3 * dpr, pad = 5 * dpr;
+      const yb = bot - size - 3 * dpr;
+      const lockX = x1 - pad - size, diceX = lockX - gap - size;
+      const locked = !!((S.project.overrides || {})[cut.line] || {}).lock;
+      const button = (bx, action) => {
+        const hover = S.timelineActionHover && S.timelineActionHover.cutIndex === cut.index && S.timelineActionHover.action === action;
+        x.fillStyle = hover ? 'rgba(245,165,12,0.18)' : 'rgba(0,0,0,0.35)';
+        x.fillRect(bx, yb, size, size);
+        x.strokeStyle = action === 'lock' && locked ? '#16f4d4' : 'rgba(236,231,225,0.78)';
+        x.lineWidth = Math.max(1, dpr);
+        if (action === 'dice') {
+          const q = size * 0.21, s = size * 0.58, px = bx + q, py = yb + q;
+          x.strokeRect(px, py, s, s);
+          x.fillStyle = x.strokeStyle;
+          const rr = Math.max(1, 1.1 * dpr);
+          for (const [dx, dy] of [[.28,.28],[.72,.28],[.28,.72],[.72,.72]]) {
+            x.beginPath(); x.arc(px + s * dx, py + s * dy, rr, 0, Math.PI * 2); x.fill();
+          }
+        } else {
+          const bw = size * .54, bh = size * .42, bx0 = bx + size * .23, by0 = yb + size * .47;
+          x.strokeRect(bx0, by0, bw, bh);
+          x.beginPath(); x.arc(bx + size * .5, yb + size * .47, size * .19, Math.PI, 0); x.stroke();
+        }
+        S.timelineActionHits.push({ x: bx, y: yb, w: size, h: size, action, line: cut.line, cutIndex: cut.index });
+      };
+      button(diceX, 'dice'); button(lockX, 'lock');
     }
   }
   x.font = `${10 * dpr}px monospace`;
@@ -678,6 +708,16 @@ function drawTimeline() {
     x.fillText(`×${V.zoom < 10 ? V.zoom.toFixed(1) : V.zoom.toFixed(0)}`, w - 6 * dpr, 12 * dpr);
     x.textAlign = 'left';
   }
+}
+function timelineActionAt(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
+  const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
+  for (let i = S.timelineActionHits.length - 1; i >= 0; i--) {
+    const h = S.timelineActionHits[i];
+    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h;
+  }
+  return null;
 }
 function timelineEditableBoundaries() {
   ensureLineCutOrdinals(S.plan);
@@ -813,6 +853,21 @@ function replaceLyricLineFromList(lineIndex, newBody) {
   replan();
   return true;
 }
+function rerollLine(lineIndex) {
+  const line = S.plan.lines[lineIndex]; if (!line) return;
+  const cur = (S.project.overrides || {})[lineIndex] || {};
+  setOv(lineIndex, { seed: (cur.seed | 0) + 1, lock: false, lockedSeed: undefined });
+  replan();
+  const ln = S.plan.lines[lineIndex];
+  if (ln) seek(ln.start + 0.001);
+}
+function toggleLineLock(lineIndex) {
+  const line = S.plan.lines[lineIndex]; if (!line) return;
+  const cur = (S.project.overrides || {})[lineIndex] || {};
+  if (cur.lock) setOv(lineIndex, { lock: false, lockedSeed: undefined });
+  else setOv(lineIndex, { lock: true, lockedSeed: line.seed });
+  replan();
+}
 function renderLines() {
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
@@ -864,13 +919,8 @@ function renderLines() {
     });
     styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
     li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
-    li.querySelector('.dice').addEventListener('click', () => { const cur = ov[i] || {}; setOv(i, { seed: (cur.seed | 0) + 1, lock: false }); replan(); seek(ln.start + 0.001); });
-    li.querySelector('.lock').addEventListener('click', () => {
-      const cur = ov[i] || {};
-      if (cur.lock) setOv(i, { lock: false, lockedSeed: undefined });
-      else setOv(i, { lock: true, lockedSeed: ln.seed });
-      replan();
-    });
+    li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
+    li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
     S.plan.cuts.filter(c => c.line === i && J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special).forEach(c => {
       const sp = document.createElement('span'); sp.textContent = J.LAYOUTS[c.layout].name; sp.title = `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
@@ -1360,6 +1410,15 @@ function bind() {
   const tl = $('timeline');
   let drag = false;
   tl.addEventListener('pointerdown', e => {
+    const a = timelineActionAt(e);
+    if (a) {
+      e.preventDefault(); e.stopPropagation();
+      drag = false;
+      S.timelineActionHover = null;
+      if (a.action === 'dice') rerollLine(a.line);
+      else toggleLineLock(a.line);
+      return;
+    }
     const b = timelineBoundaryAt(e, 9);
     if (b) {
       e.preventDefault();
@@ -1381,12 +1440,23 @@ function bind() {
   tl.addEventListener('pointermove', e => {
     if (S.timelineBoundaryDrag) { updateBoundaryDrag(e); return; }
     if (drag) { timelineSeek(e); return; }
+    const a = timelineActionAt(e);
+    if (a) {
+      const oldA = S.timelineActionHover && (S.timelineActionHover.cutIndex + ':' + S.timelineActionHover.action);
+      const nextA = a.cutIndex + ':' + a.action;
+      S.timelineActionHover = a; S.timelineBoundaryHover = null;
+      tl.style.cursor = 'pointer';
+      if (oldA !== nextA) drawTimeline();
+      return;
+    }
+    const hadAction = !!S.timelineActionHover;
+    S.timelineActionHover = null;
     const b = timelineBoundaryAt(e, 8);
     const old = S.timelineBoundaryHover && S.timelineBoundaryHover.key;
     const next = b && b.key;
     S.timelineBoundaryHover = b;
     tl.style.cursor = b ? 'col-resize' : 'pointer';
-    if (old !== next) drawTimeline();
+    if (hadAction || old !== next) drawTimeline();
   });
   tl.addEventListener('pointerup', e => {
     if (S.timelineBoundaryDrag) {
@@ -1398,8 +1468,8 @@ function bind() {
   });
   tl.addEventListener('pointercancel', () => { drag = false; finishBoundaryDrag(); });
   tl.addEventListener('pointerleave', () => {
-    if (!drag && !S.timelineBoundaryDrag && S.timelineBoundaryHover) {
-      S.timelineBoundaryHover = null; tl.style.cursor = 'pointer'; drawTimeline();
+    if (!drag && !S.timelineBoundaryDrag && (S.timelineBoundaryHover || S.timelineActionHover)) {
+      S.timelineBoundaryHover = null; S.timelineActionHover = null; tl.style.cursor = 'pointer'; drawTimeline();
     }
   });
   tl.addEventListener('wheel', timelineWheel, { passive: false });
