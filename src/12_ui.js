@@ -48,11 +48,17 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
-  o.images = (p && p.images) || {};
+  delete o.images;
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, (p && p.ui) || {});
+  const incomingUi = (p && p.ui) || {};
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, previewHeight: null }, incomingUi);
+  // timelineDockHeight belonged to the first splitter implementation and made
+  // the preview fill the whole remaining screen. Ignore it so old projects
+  // reopen at the original pre-splitter preview size.
+  if (!Object.prototype.hasOwnProperty.call(incomingUi, 'previewHeight')) o.ui.previewHeight = null;
+  delete o.ui.timelineDockHeight;
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -150,7 +156,7 @@ function editorRedo() {
    Browsers do not expose a reusable full local file path from <input type=file>.
    Store the source audio bytes in IndexedDB for automatic restore, and embed them
    in an explicitly saved .jizura.json so the project remains portable. */
-const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio', IMAGE_STORE = 'images';
+const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio';
 let audioDbJob = null;
 function openAudioDb() {
   if (!window.indexedDB) return Promise.resolve(null);
@@ -161,7 +167,6 @@ function openAudioDb() {
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
-      if (!db.objectStoreNames.contains(IMAGE_STORE)) db.createObjectStore(IMAGE_STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
@@ -203,47 +208,9 @@ async function deleteStoredAudio(id) {
   } catch (e) { console.warn('audio cleanup', e); }
 }
 
-async function putStoredImage(meta, file) {
-  const db = await openAudioDb(); if (!db) throw new Error('このブラウザでは画像の自動保存を利用できません');
-  const blob = file instanceof Blob ? file.slice(0, file.size, file.type || meta.type || '') : new Blob([file], { type: meta.type || '' });
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IMAGE_STORE, 'readwrite');
-    tx.objectStore(IMAGE_STORE).put({ id: meta.id, name: meta.name, type: meta.type || '', size: blob.size, lastModified: meta.lastModified || 0, width: meta.width || 0, height: meta.height || 0, blob });
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error || new Error('画像を保存できませんでした'));
-    tx.onabort = () => reject(tx.error || new Error('画像の保存が中断されました'));
-  });
-}
-async function getStoredImage(id) {
-  if (!id) return null;
-  try {
-    const db = await openAudioDb(); if (!db) return null;
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(IMAGE_STORE, 'readonly'), req = tx.objectStore(IMAGE_STORE).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) { console.warn('image restore', e); return null; }
-}
-async function deleteStoredImage(id) {
-  if (!id) return;
-  try {
-    const db = await openAudioDb(); if (!db) return;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(IMAGE_STORE, 'readwrite');
-      tx.objectStore(IMAGE_STORE).delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) { console.warn('image cleanup', e); }
-}
 function newAudioId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
   return 'audio-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-}
-function newImageId() {
-  try { if (crypto && crypto.randomUUID) return 'img-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20); } catch (e) {}
-  return 'img-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 function audioMeta(file, id) {
   return { id, name: file.name || 'audio', type: file.type || '', size: file.size || 0, lastModified: file.lastModified || 0 };
@@ -322,71 +289,6 @@ async function restoreEmbeddedAudio(asset) {
   }
 }
 
-async function attachProjectImage(file, opt = {}) {
-  const id = opt.id || newImageId();
-  const img = await J.setImageAsset(id, file);
-  const meta = {
-    id, name: file.name || (opt.name || 'image'),
-    type: file.type || opt.type || 'image/png',
-    size: file.size || 0, lastModified: file.lastModified || 0,
-    width: img && (img.width || img.naturalWidth) || opt.width || 0,
-    height: img && (img.height || img.naturalHeight) || opt.height || 0,
-  };
-  S.project.images = Object.assign({}, S.project.images || {}, { [id]: meta });
-  if (opt.persist !== false) await putStoredImage(meta, file);
-  return meta;
-}
-async function restoreProjectImages() {
-  const imgs = S.project && S.project.images || {};
-  let restored = 0;
-  for (const [id, meta] of Object.entries(imgs)) {
-    const rec = await getStoredImage(id);
-    if (!rec || !rec.blob) continue;
-    try { await J.setImageAsset(id, rec.blob); restored++; } catch (e) { console.warn('image restore asset', id, e); }
-  }
-  return restored;
-}
-async function restoreEmbeddedImages(items) {
-  let restored = 0;
-  for (const a of items || []) {
-    try {
-      const file = await embeddedToFile(a);
-      if (!file) continue;
-      const meta = await attachProjectImage(file, {
-        id: a.id, persist: true, name: a.name, type: a.type, width: a.width, height: a.height
-      });
-      if (meta) restored++;
-    } catch (e) { console.warn('embedded image restore', a && a.id, e); }
-  }
-  return restored;
-}
-function insertImageToken(id) {
-  const ta = $('lyrics'), prev = S.project.lyrics || '';
-  let pos = ta && Number.isFinite(ta.selectionStart) ? ta.selectionStart : prev.length;
-  pos = J.clamp(pos, 0, prev.length);
-  let lineEnd = prev.indexOf('\n', pos);
-  if (lineEnd < 0) lineEnd = prev.length;
-  const before = prev.slice(0, lineEnd);
-  const after = prev.slice(lineEnd);
-  const token = '[img:' + id + ']';
-  const sepA = before && !before.endsWith('\n') ? '\n' : '';
-  const sepB = after && !after.startsWith('\n') ? '\n' : '';
-  const next = before + sepA + token + sepB + after;
-  remapLineIndexedState(prev, next);
-  S.project.lyrics = next;
-  ta.value = next;
-  const caret = (before + sepA + token).length;
-  try { ta.setSelectionRange(caret, caret); } catch (e) {}
-  replan();
-}
-async function addImageFile(file) {
-  if (!file || !/^image\/(png|jpeg|webp)$/i.test(file.type || '')) throw new Error('PNG / JPEG / WebP の画像を選んでください');
-  const meta = await attachProjectImage(file, { persist: true });
-  insertImageToken(meta.id);
-  flushSave();
-  toast('画像を追加しました');
-  return meta;
-}
 async function projectPayloadForSave() {
   // Text inputs replan on a short debounce. If Save is clicked inside that window,
   // force the pending plan update before freezing the project.
@@ -411,17 +313,6 @@ async function projectPayloadForSave() {
       dataUrl: await blobToDataUrl(file),
     };
   }
-  out._imageAssets = [];
-  for (const [id, meta] of Object.entries(out.images || {})) {
-    const rec = await getStoredImage(id);
-    if (!rec || !rec.blob) continue;
-    out._imageAssets.push({
-      id, name: meta.name || rec.name || 'image', type: meta.type || rec.type || rec.blob.type || 'image/png',
-      size: rec.blob.size, lastModified: meta.lastModified || rec.lastModified || 0,
-      width: meta.width || rec.width || 0, height: meta.height || rec.height || 0,
-      dataUrl: await blobToDataUrl(rec.blob),
-    });
-  }
   return out;
 }
 async function applyProjectData(raw) {
@@ -429,13 +320,12 @@ async function applyProjectData(raw) {
   S.audio = null; S.audioSource = null;
   const p = Object.assign({}, raw || {});
   const embedded = p._audioAsset || null;
-  const embeddedImages = Array.isArray(p._imageAssets) ? p._imageAssets : [];
-  delete p._audioAsset; delete p._imageAssets;
+  delete p._audioAsset;
+  delete p._imageAssets;
+  delete p.images;
   S.project = mergeProject(p);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
-  if (embeddedImages.length) await restoreEmbeddedImages(embeddedImages);
-  else await restoreProjectImages();
   syncUI();
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
@@ -516,7 +406,7 @@ function planInputKey(project) {
     extra: project.extra === true, wa: project.wa !== false, keyBg: project.keyBg || 'off',
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
-    overrides: project.overrides || {}, images: project.images || {}, colors: project.colors || {}, fonts: project.fonts || {},
+    overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
     userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
@@ -1910,7 +1800,6 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
-  await restoreProjectImages();
   syncUI();
   // Prefer the saved finished plan. Older projects without a snapshot are
   // generated once with the current planner, then immediately upgraded.
@@ -1940,5 +1829,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, addImageFile, restoreProjectImages, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, revealLineInList, applyWorkspaceUi };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, revealLineInList, applyWorkspaceUi };
 })();
