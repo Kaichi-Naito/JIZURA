@@ -544,7 +544,7 @@ function applyWorkspaceSizes() {
   const work = document.querySelector('.work'), vp = $('viewport');
   const ui = S.project.ui || (S.project.ui = {});
   const maxLeft = Math.max(250, Math.min(560, window.innerWidth - 650));
-  const lw = Number.isFinite(+ui.leftWidth) ? J.clamp(+ui.leftWidth, 250, maxLeft) : 330;
+  const lw = ui.leftWidth != null && Number.isFinite(+ui.leftWidth) ? J.clamp(+ui.leftWidth, 250, maxLeft) : 330;
   work.style.setProperty('--left-width', Math.round(lw) + 'px');
   if (Number.isFinite(+ui.previewHeight) && +ui.previewHeight >= 180) vp.style.height = Math.round(+ui.previewHeight) + 'px';
   else vp.style.height = '';
