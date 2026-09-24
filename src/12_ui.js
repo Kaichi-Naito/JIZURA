@@ -550,6 +550,7 @@ function applyWorkspaceSizes() {
   else vp.style.height = '';
 }
 function sizeViewport() {
+  if (!S.plan) return;
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
   const customH = S.project && S.project.ui && Number.isFinite(+S.project.ui.previewHeight) && +S.project.ui.previewHeight >= 180;
@@ -633,6 +634,7 @@ function followTimelinePlayhead() {
   return true;
 }
 function drawTimeline() {
+  if (!S.plan) return;
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
