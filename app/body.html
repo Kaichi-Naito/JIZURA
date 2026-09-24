@@ -21,8 +21,14 @@
     <!-- ================= left: lyrics & timing ================= -->
     <section class="col col-left" aria-label="歌詞とタイミング">
       <div class="sec">
-        <div class="sec-h"><h2>歌詞</h2><button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button></div>
-        <textarea id="lyrics" rows="9" spellcheck="false" aria-label="歌詞（1行 = 1フレーズ）"></textarea>
+        <div class="sec-h">
+          <h2>歌詞</h2>
+          <div class="lyrics-head-actions">
+            <label class="file compact-file" title="画像を歌詞と同じ時間軸の要素として追加">画像を追加<input id="imageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+            <button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button>
+          </div>
+        </div>
+        <textarea id="lyrics" rows="9" spellcheck="false" aria-label="歌詞（1行 = 1フレーズ。画像行も挿入できます）"></textarea>
         <div id="syntax" class="syntax" hidden>
           <ul>
             <li>1行が1フレーズ。空行は少し間を空けます</li>
@@ -31,6 +37,7 @@
             <li>行末の <code>!</code> … フラッシュと揺れを入れる</li>
             <li><code>歌詞|ruby or note</code> … 注釈レイアウトの小さな文字</li>
             <li><code>[01:23.45]歌詞</code> … LRC のタイムスタンプをそのまま使用</li>
+            <li><code>[img:…]</code> … 「画像を追加」で挿入される画像要素（通常は手入力不要）</li>
             <li><code>#</code> で始まる行 … コメント（無視）</li>
           </ul>
         </div>
@@ -77,24 +84,28 @@
         <ol id="lineList"></ol>
       </div>
     </section>
+    <div id="leftSplitter" class="workspace-splitter splitter-v" role="separator" aria-orientation="vertical" aria-label="左パネルの幅を変更" tabindex="0"></div>
 
     <!-- ================= center: stage ================= -->
     <section class="col col-stage" aria-label="プレビュー">
       <div class="viewport" id="viewport"><canvas id="view" width="1280" height="720"></canvas><div id="viewMsg" class="overlay-msg" hidden></div><div id="keyBadge" class="key-badge" hidden></div><div id="toast" class="toast" role="status" aria-live="polite" hidden></div></div>
-      <div class="transport">
-        <button id="btnPlay" class="play" aria-label="再生">▶</button>
-        <span id="timeNow" class="tc">00:00.00</span><span class="tc muted">/</span><span id="timeDur" class="tc muted">00:00.00</span>
-        <input id="scrub" type="range" min="0" max="10000" value="0" aria-label="再生位置">
-        <button id="btnLoop" class="ghost small" aria-pressed="true">ループ</button>
-        <span class="hist-btns">
-          <button id="btnPrev" class="ghost small icon-txt" title="前の案に戻る" aria-label="前の案">◀</button>
-          <button id="btnNext" class="ghost small icon-txt" title="次の案へ進む" aria-label="次の案">▶</button>
-        </span>
-        <button id="btnShuffle" class="accent" title="設定はそのままで構成だけ再抽選（ロックした行は維持）">シャッフル</button>
-        <button id="btnOmakase" class="primary" title="スタイル・雰囲気・演出・配色をまるごとランダムに（キー R）">おまかせ</button>
+      <div id="stageSplitter" class="workspace-splitter splitter-h" role="separator" aria-orientation="horizontal" aria-label="タイムライン領域の高さを変更" tabindex="0"></div>
+      <div id="timelineDock" class="timeline-dock">
+        <div class="transport">
+          <button id="btnPlay" class="play" aria-label="再生">▶</button>
+          <span id="timeNow" class="tc">00:00.00</span><span class="tc muted">/</span><span id="timeDur" class="tc muted">00:00.00</span>
+          <input id="scrub" type="range" min="0" max="10000" value="0" aria-label="再生位置">
+          <button id="btnLoop" class="ghost small" aria-pressed="true">ループ</button>
+          <span class="hist-btns">
+            <button id="btnPrev" class="ghost small icon-txt" title="前の案に戻る" aria-label="前の案">◀</button>
+            <button id="btnNext" class="ghost small icon-txt" title="次の案へ進む" aria-label="次の案">▶</button>
+          </span>
+          <button id="btnShuffle" class="accent" title="設定はそのままで構成だけ再抽選（ロックした行は維持）">シャッフル</button>
+          <button id="btnOmakase" class="primary" title="スタイル・雰囲気・演出・配色をまるごとランダムに（キー R）">おまかせ</button>
+        </div>
+        <canvas id="timeline" aria-label="タイムライン（クリックで移動、カットをクリックすると左の行へ移動、境界をドラッグして開始時刻を調整、ホイールで拡大縮小）"></canvas>
+        <div class="cutinfo" id="cutInfo"></div>
       </div>
-      <canvas id="timeline" aria-label="タイムライン（クリックで移動、境界をドラッグして開始時刻を調整、ホイールで拡大縮小）"></canvas>
-      <div class="cutinfo" id="cutInfo"></div>
     </section>
 
     <!-- ================= right: look & output ================= -->
