@@ -1214,6 +1214,9 @@ function syncOut() {
   $('outAspect').value = S.project.aspect; $('outRes').value = String(S.project.res); $('outFps').value = String(S.project.fps);
   $('eAspect').value = S.project.aspect; $('eRes').value = String(S.project.res); $('eFps').value = String(S.project.fps);
   $('outQuality').value = S.project.quality || 'high'; $('outAudio').checked = S.project.includeAudio !== false;
+  const alphaPct = Math.round(J.clamp(Number.isFinite(+S.project.alphaBgOpacity) ? +S.project.alphaBgOpacity : 0, 0, 1) * 100);
+  for (const id of ['outAlphaBg', 'eAlphaBg']) if ($(id)) $(id).value = String(alphaPct);
+  for (const id of ['outAlphaBgValue', 'eAlphaBgValue']) if ($(id)) $(id).textContent = alphaPct + '%';
   const k = J.keyMode(S.project) || 'off';
   $('outKey').value = k; $('eKey').value = k;
   const kb = $('keyBadge');
@@ -1445,6 +1448,13 @@ function bind() {
   ['outRes', 'eRes'].forEach(id => $(id).addEventListener('change', e => { S.project.res = +e.target.value; syncOut(); autosave(); codecNote(); }));
   ['outFps', 'eFps'].forEach(id => $(id).addEventListener('change', e => { S.project.fps = +e.target.value; syncOut(); replan(); codecNote(); }));
   $('outQuality').addEventListener('change', e => { S.project.quality = e.target.value; autosave(); });
+  ['outAlphaBg', 'eAlphaBg'].forEach(id => $(id).addEventListener('input', e => {
+    const pct = J.clamp(+e.target.value || 0, 0, 100);
+    S.project.alphaBgOpacity = pct / 100;
+    for (const sid of ['outAlphaBg', 'eAlphaBg']) if ($(sid) && $(sid) !== e.target) $(sid).value = String(pct);
+    for (const oid of ['outAlphaBgValue', 'eAlphaBgValue']) if ($(oid)) $(oid).textContent = Math.round(pct) + '%';
+    autosave();
+  }));
   ['outKey', 'eKey'].forEach(id => $(id).addEventListener('change', e => {
     S.project.keyBg = e.target.value; syncOut(); replan(); flushSave();
     const k = J.keyMode(S.project);
