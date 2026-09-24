@@ -895,7 +895,10 @@ function timelineCutAtPointer(ev) {
   for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
     const h = S.timelineCutHits[i];
     if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
-      return S.plan.cuts[h.cutIndex] || null;
+      // Use the hit record directly. cut.index is a display/stable index and is
+      // not guaranteed to be the current plan.cuts array offset after restoring
+      // a frozen plan or applying timing edits.
+      return h;
     }
   }
   return null;
@@ -1675,9 +1678,10 @@ function bind() {
       e.preventDefault(); e.stopPropagation();
       drag = false;
       S.timelineActionHover = null;
-      revealLineInList(a.line);
       if (a.action === 'dice') rerollLine(a.line);
       else toggleLineLock(a.line);
+      // replan() rebuilds the line-list DOM, so reveal only after the action.
+      revealLineInList(a.line);
       return;
     }
     const b = timelineBoundaryAt(e, 9);
