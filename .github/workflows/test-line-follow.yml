@@ -113,7 +113,7 @@ jobs:
 
                   # 2) Inline lyric editing preserves source syntax and edits the correct source line.
                   await page.evaluate("""() => {
-                    J.ui.project.lyrics='FIRST\n[00:05.00]夜明け/覚えてる|NOTE\nTHIRD';
+                    J.ui.project.lyrics=['FIRST','[00:05.00]夜明け/覚えてる|NOTE','THIRD'].join(String.fromCharCode(10));
                     J.ui.project.timing.lineTimes={0:9,1:1,2:5};
                     J.ui.project.ui.lineSortByTime=true;
                     J.uiApi.replan();
@@ -131,7 +131,7 @@ jobs:
                     textarea:document.querySelector('#lyrics').value,
                     parsed:J.parseLyrics(J.ui.project.lyrics).lines.map(x=>x.text)
                   })""")
-                  expected_raw="FIRST\n[00:05.00]夜明け/変えた|NOTE\nTHIRD"
+                  expected_raw=chr(10).join(["FIRST","[00:05.00]夜明け/変えた|NOTE","THIRD"])
                   if lyric_state["raw"]!=expected_raw or lyric_state["textarea"]!=expected_raw:
                       raise RuntimeError(f"inline edit did not update source/main textarea correctly: {lyric_state}")
                   if "夜明け変えた" not in lyric_state["parsed"]:
