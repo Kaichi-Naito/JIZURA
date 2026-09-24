@@ -51,7 +51,7 @@ function mergeProject(p) {
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false }, (p && p.ui) || {});
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -754,11 +754,25 @@ function timelineWheel(ev) {
 
 /* ---------------- cut info ---------------- */
 let lastCutIdx = -2;
+function revealLineInList(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const margin = 8;
+  const top = lr.top + margin, bottom = lr.bottom - margin;
+  if (er.top < top) list.scrollTop -= top - er.top;
+  else if (er.bottom > bottom) list.scrollTop += er.bottom - bottom;
+}
 function updateCutInfo() {
   const cut = J.cutAt(S.plan, S.t);
   const idx = cut ? cut.index : -1;
   const li = cut ? cut.line : -1;
-  if (li !== S.curLine) { S.lineEls.forEach((el, i) => el.classList.toggle('cur', i === li)); S.curLine = li; }
+  if (li !== S.curLine) {
+    S.lineEls.forEach((el, i) => el.classList.toggle('cur', i === li));
+    S.curLine = li;
+    revealLineInList(li);
+  }
   if (idx === lastCutIdx) return;
   lastCutIdx = idx;
   const el = $('cutInfo');
@@ -777,11 +791,34 @@ function updateCutInfo() {
 }
 
 /* ---------------- line list ---------------- */
+function replaceLyricLineFromList(lineIndex, newBody) {
+  const prev = S.project.lyrics || '';
+  const parsed = J.parseLyrics(prev);
+  const ln = parsed.lines[lineIndex];
+  if (!ln || ln.sourceIndex == null) return false;
+  const raw = String(prev).replace(/\r/g, '').split('\n');
+  if (ln.sourceIndex < 0 || ln.sourceIndex >= raw.length) return false;
+  const oldRaw = raw[ln.sourceIndex] || '';
+  // Keep one or more LRC timestamp prefixes; the inline editor controls the lyric body.
+  const m = oldRaw.match(/^(\s*(?:\[\d+:\d+(?:[.:]\d+)?\]\s*)+)/);
+  const prefix = m ? m[1] : '';
+  raw[ln.sourceIndex] = prefix + String(newBody == null ? '' : newBody).trim();
+  const next = raw.join('\n');
+  if (next === prev) return false;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next;
+  $('lyrics').value = next;
+  fontKey = '';
+  replan();
+  return true;
+}
 function renderLines() {
+  S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
   const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
   const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
+  const editLines = J.parseLyrics(S.project.lyrics).lines;
   const rows = S.plan.lines.map((ln, i) => ({ ln, i }));
   if (S.lineSortByTime) rows.sort((a, b) => (a.ln.start - b.ln.start) || (a.i - b.i));
   const sortBtn = $('btnSortLines');
@@ -789,12 +826,14 @@ function renderLines() {
   sortBtn.title = S.lineSortByTime ? '歌詞の元の行順に戻す' : 'タイムコードの早い順（昇順）に並べる';
   rows.forEach(({ ln, i }) => {
     const o = ov[i] || {};
-    const li = document.createElement('li'); li.className = 'ln';
+    const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
+    const srcLine = editLines[i];
+    const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
-      <span class="txt" title="${escapeHtml(ln.text)}">${escapeHtml(ln.text)}</span>
+      <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
       <div class="meta"><span class="cuts"></span>
       <span class="tools">
         <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
@@ -810,7 +849,16 @@ function renderLines() {
       if (isFinite(v)) S.project.timing.lineTimes[i] = Math.max(0, v); else delete S.project.timing.lineTimes[i];
       replan();
     });
-    li.querySelector('.txt').addEventListener('click', () => seek(ln.start + 0.001));
+    const txtEdit = li.querySelector('.txt-edit');
+    const originalText = editableText;
+    txtEdit.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
+    });
+    txtEdit.addEventListener('change', () => {
+      if (txtEdit.value === originalText) return;
+      replaceLyricLineFromList(i, txtEdit.value);
+    });
     styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
     li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => { const cur = ov[i] || {}; setOv(i, { seed: (cur.seed | 0) + 1, lock: false }); replan(); seek(ln.start + 0.001); });
@@ -1241,7 +1289,10 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 function syncUI() {
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
-  $('lyrics').value = S.project.lyrics;
+  const lyricsEl = $('lyrics');
+  lyricsEl.value = S.project.lyrics;
+  const savedLyricsHeight = +(S.project.ui && S.project.ui.lyricsHeight);
+  lyricsEl.style.height = Number.isFinite(savedLyricsHeight) && savedLyricsHeight >= 100 ? Math.round(savedLyricsHeight) + 'px' : '';
   $('bpm').value = S.project.timing.bpm > 0 ? S.project.timing.bpm : '';
   $('bpm').placeholder = S.audio ? `自動 ${S.audio.bpm}` : 'なし';
   $('offset').value = S.project.timing.offset ?? 0.4;
@@ -1464,7 +1515,20 @@ function bind() {
   });
   $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
   window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
-  if (window.ResizeObserver) new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
+    let lyricsResizeReady = false;
+    requestAnimationFrame(() => { lyricsResizeReady = true; });
+    new ResizeObserver(() => {
+      if (!lyricsResizeReady || !S.project) return;
+      const h = Math.round($('lyrics').getBoundingClientRect().height);
+      if (!(h >= 100)) return;
+      const prev = +(S.project.ui && S.project.ui.lyricsHeight);
+      if (Number.isFinite(prev) && Math.abs(prev - h) < 2) return;
+      S.project.ui = Object.assign({}, S.project.ui || {}, { lyricsHeight: h });
+      autosave();
+    }).observe($('lyrics'));
+  }
 }
 
 /* song file -> beat analysis (file input, or a host such as the After Effects panel) */
