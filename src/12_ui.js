@@ -516,7 +516,7 @@ function planInputKey(project) {
     extra: project.extra === true, wa: project.wa !== false, keyBg: project.keyBg || 'off',
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
-    overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
+    overrides: project.overrides || {}, images: project.images || {}, colors: project.colors || {}, fonts: project.fonts || {},
     userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
@@ -1019,14 +1019,16 @@ function renderLines() {
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
-    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
-    const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
+    const isImage = !!(srcLine && srcLine.kind === 'image');
+    const imgMeta = isImage && S.project.images ? S.project.images[srcLine.imageId] : null;
+    const layoutName = isImage ? '画像' : (o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動');
+    const editableText = isImage ? ('🖼 ' + ((imgMeta && imgMeta.name) || '画像')) : (srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text);
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="time-arrow" aria-hidden="true">→</span>
       <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
-      <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
+      <input class="txt txt-edit${isImage ? ' image-line' : ''}" type="text" value="${escapeHtml(editableText)}" ${isImage ? 'readonly' : ''} title="${isImage ? '画像要素。元の歌詞欄では [img:…] として管理されます' : '歌詞を編集（Enterまたはフォーカスを外して確定）'}" aria-label="${i + 1}行目の${isImage ? '画像' : '歌詞'}">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       <div class="meta">
@@ -1038,6 +1040,7 @@ function renderLines() {
       </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
+    if (isImage) li.querySelector('.layout-trigger').disabled = true;
     li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -1059,16 +1062,18 @@ function renderLines() {
     });
     const txtEdit = li.querySelector('.txt-edit');
     const originalText = editableText;
-    txtEdit.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
-    });
-    txtEdit.addEventListener('change', () => {
-      if (txtEdit.value === originalText) return;
-      replaceLyricLineFromList(i, txtEdit.value);
-    });
+    if (!isImage) {
+      txtEdit.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
+      });
+      txtEdit.addEventListener('change', () => {
+        if (txtEdit.value === originalText) return;
+        replaceLyricLineFromList(i, txtEdit.value);
+      });
+    }
     styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
-    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { if (isImage) return; e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
