@@ -51,6 +51,7 @@ function mergeProject(p) {
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
+  o.ui = Object.assign({ lineSortByTime: false }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -358,12 +359,25 @@ function remapLineIndexedState(oldRaw, newRaw) {
   const oldToNew = {};
   for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
   const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
+  const remapCutId = id => {
+    if (id === 'title') return 'title';
+    let m = id.match(/^(-?\d+):(\d+)$/);
+    if (m) {
+      const ni = oldToNew[m[1]];
+      return ni == null ? null : ni + ':' + m[2];
+    }
+    m = id.match(/^(-?\d+):i$/);
+    if (m) {
+      const ni = oldToNew[m[1]];
+      return ni == null ? null : ni + ':i';
+    }
+    return null;
+  };
   for (const [key, value] of Object.entries(oldBounds)) {
-    const m = key.match(/^(-?\d+):(\d+)>(-?\d+):(\d+)$/);
-    if (!m) continue;
-    const l = oldToNew[m[1]], r = oldToNew[m[3]];
-    if (l == null || r == null) continue;
-    newBounds[l + ':' + m[2] + '>' + r + ':' + m[4]] = value;
+    const parts = key.split('>');
+    if (parts.length !== 2) continue;
+    const a = remapCutId(parts[0]), b = remapCutId(parts[1]);
+    if (a && b) newBounds[a + '>' + b] = value;
   }
   S.project.timing.cutBoundaries = newBounds;
   S.project.overrides = remap(S.project.overrides || {});
@@ -638,8 +652,7 @@ function drawTimeline() {
     if (bt >= V.start && bt <= V.end) {
       const bx = X(bt);
       x.fillStyle = S.timelineBoundaryDrag ? '#f5a50c' : 'rgba(245,165,12,0.78)';
-      x.fillRect(Math.round(bx) - Math.max(1, dpr), top - 3 * dpr, Math.max(2, 2 * dpr), bot - top + 6 * dpr);
-      x.fillRect(Math.round(bx) - 4 * dpr, top - 6 * dpr, 8 * dpr, 4 * dpr);
+      x.fillRect(Math.round(bx) - Math.max(1, dpr), top, Math.max(2, 2 * dpr), bot - top);
     }
   }
   if (S.t >= V.start && S.t <= V.end) {
@@ -656,10 +669,11 @@ function drawTimeline() {
 }
 function timelineEditableBoundaries() {
   ensureLineCutOrdinals(S.plan);
-  const cuts = (S.plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).slice().sort((a, b) => a.start - b.start);
+  const cuts = (S.plan.cuts || []).slice().sort((a, b) => a.start - b.start);
   const out = [];
   for (let i = 1; i < cuts.length; i++) {
     const left = cuts[i - 1], right = cuts[i];
+    // A draggable "boundary" exists only when the two timeline items actually touch.
     if (Math.abs(left.end - right.start) > 0.07) continue;
     if (right.end - left.start < 0.14) continue;
     const key = J.cutBoundaryKey && J.cutBoundaryKey(left, right);
@@ -669,6 +683,11 @@ function timelineEditableBoundaries() {
 }
 function timelineBoundaryAt(ev, radius = 7) {
   const tl = $('timeline'), r = tl.getBoundingClientRect(), V = timelineView();
+  // The upper 30% is the line-number/seek area. Boundary dragging is deliberately
+  // disabled there so clicking/dragging it always seeks playback.
+  const bandTop = r.top + r.height * 0.30;
+  const bandBottom = r.bottom - 8;
+  if (ev.clientY < bandTop || ev.clientY > bandBottom) return null;
   let best = null, bestPx = radius + 1;
   for (const b of timelineEditableBoundaries()) {
     if (b.right.start < V.start || b.right.start > V.end) continue;
@@ -694,7 +713,8 @@ function updateBoundaryDrag(ev) {
   const t = +result.time.toFixed(4);
   if (!S.project.timing.cutBoundaries) S.project.timing.cutBoundaries = {};
   S.project.timing.cutBoundaries[d.boundary.key] = t;
-  if (d.boundary.left.line !== d.boundary.right.line && d.boundary.right.lineCut === 0) {
+  if (d.boundary.right.line >= 0 && d.boundary.right.lineCut === 0 &&
+      (d.boundary.left.line !== d.boundary.right.line || d.boundary.left.layout === 'title' || d.boundary.left.layout === 'interlude')) {
     if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
     S.project.timing.lineTimes[d.boundary.right.line] = t;
   }
@@ -1219,6 +1239,7 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
+  S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   $('lyrics').value = S.project.lyrics;
   $('bpm').value = S.project.timing.bpm > 0 ? S.project.timing.bpm : '';
@@ -1251,7 +1272,11 @@ function bind() {
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
-  $('btnSortLines').addEventListener('click', () => { S.lineSortByTime = !S.lineSortByTime; renderLines(); updateCutInfo(); });
+  $('btnSortLines').addEventListener('click', () => {
+    S.lineSortByTime = !S.lineSortByTime;
+    S.project.ui = Object.assign({}, S.project.ui || {}, { lineSortByTime: S.lineSortByTime });
+    renderLines(); updateCutInfo(); autosave();
+  });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
   $('previewVolume').addEventListener('input', e => {
     const pct = J.clamp(+e.target.value || 0, 0, 200);

@@ -26,6 +26,7 @@ J.defaultProject = () => ({
   overrides: {},
   colors: { enabled: false },
   fonts: {},
+  ui: { lineSortByTime: false },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -346,10 +347,16 @@ function makeCut(o) {
   return c;
 }
 
+J.cutIdentity = cut => {
+  if (!cut) return null;
+  if (cut.layout === 'title' || cut.line < 0) return 'title';
+  if (cut.layout === 'interlude') return cut.line + ':i';
+  if (cut.line >= 0 && cut.lineCut >= 0) return cut.line + ':' + cut.lineCut;
+  return null;
+};
 J.cutBoundaryKey = (left, right) => {
-  if (!left || !right || left.line == null || right.line == null) return null;
-  if (!(left.lineCut >= 0) || !(right.lineCut >= 0)) return null;
-  return left.line + ':' + left.lineCut + '>' + right.line + ':' + right.lineCut;
+  const a = J.cutIdentity(left), b = J.cutIdentity(right);
+  return a && b ? a + '>' + b : null;
 };
 function fitCutDur(c) {
   c.dur = Math.max(0.001, c.end - c.start);
@@ -377,19 +384,32 @@ J.setCutBoundaryTime = (plan, left, right, value) => {
     else if (ev.line === right.line && ev.lineCut === right.lineCut && Number.isFinite(ev.cutRel)) ev.t = right.start + ev.cutRel * right.dur;
   }
 
-  if (left.line !== right.line) {
-    const ll = plan.lines && plan.lines[left.line], rl = plan.lines && plan.lines[right.line];
-    if (ll && left.lineCut >= 0) { ll.end = t; ll.visEnd = Math.max(ll.start, t); }
-    if (rl && right.lineCut === 0) rl.start = t;
+  const lines = plan.lines || [];
+  // Keep the line-level timing model in sync with special timeline items too.
+  if (left.layout === 'interlude' && left.line >= 0) {
+    const ll = lines[left.line];
+    if (ll) ll.end = t;
+  } else if (left.line >= 0 && left.lineCut >= 0) {
+    const ll = lines[left.line];
+    if (ll) {
+      if (right.layout === 'interlude' && right.line === left.line) ll.visEnd = Math.max(ll.start, t);
+      else if (right.line !== left.line) { ll.end = t; ll.visEnd = Math.max(ll.start, t); }
+    }
+  }
+  if (right.line >= 0 && right.lineCut === 0) {
+    const rl = lines[right.line];
+    if (rl) rl.start = t;
   }
   if (plan.events) plan.events.sort((a, b) => a.t - b.t);
   return { time: t, delta: t - oldRightStart };
 };
 J.applyCutBoundaries = (plan, map) => {
   if (!plan || !map || typeof map !== 'object') return;
-  const cuts = (plan.cuts || []).filter(c => c.line >= 0 && c.layout !== 'interlude' && c.lineCut >= 0).sort((a, b) => a.start - b.start);
+  const cuts = (plan.cuts || []).slice().sort((a, b) => a.start - b.start);
   for (let i = 1; i < cuts.length; i++) {
-    const left = cuts[i - 1], right = cuts[i], key = J.cutBoundaryKey(left, right);
+    const left = cuts[i - 1], right = cuts[i];
+    if (Math.abs(left.end - right.start) > 0.07) continue;
+    const key = J.cutBoundaryKey(left, right);
     if (key && Number.isFinite(+map[key])) J.setCutBoundaryTime(plan, left, right, +map[key]);
   }
 };
