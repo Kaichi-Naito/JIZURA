@@ -117,6 +117,7 @@ class Renderer {
       ctx.restore();
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
     }
+    if (opt.backgroundOnly) { ctx.restore(); return; }
     const shx = J.rs(step, 71) * shake * 16 * u, shy = J.rs(step, 72) * shake * 11 * u;
     // ---------- content passes ----------
     const passes = [

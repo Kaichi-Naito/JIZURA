@@ -1214,6 +1214,9 @@ function syncOut() {
   $('outAspect').value = S.project.aspect; $('outRes').value = String(S.project.res); $('outFps').value = String(S.project.fps);
   $('eAspect').value = S.project.aspect; $('eRes').value = String(S.project.res); $('eFps').value = String(S.project.fps);
   $('outQuality').value = S.project.quality || 'high'; $('outAudio').checked = S.project.includeAudio !== false;
+  const alphaPct = Math.round(J.clamp(Number.isFinite(+S.project.alphaBgOpacity) ? +S.project.alphaBgOpacity : 0, 0, 1) * 100);
+  for (const id of ['outAlphaBg', 'eAlphaBg']) if ($(id)) $(id).value = String(alphaPct);
+  for (const id of ['outAlphaBgValue', 'eAlphaBgValue']) if ($(id)) $(id).textContent = alphaPct + '%';
   const k = J.keyMode(S.project) || 'off';
   $('outKey').value = k; $('eKey').value = k;
   const kb = $('keyBadge');
@@ -1227,7 +1230,7 @@ async function codecNote() {
   $('btnMP4').disabled = !vc; $('eMP4').disabled = !vc;
   if (!vc) $('eMP4').title = 'このブラウザは MP4 書き出しに対応していません（Chrome / Edge 推奨）';
 }
-const EXP_BTNS = ['btnMP4', 'btnPNG', 'btnPNGA', 'eMP4'];
+const EXP_BTNS = ['btnMP4', 'btnMOVA', 'btnPNG', 'btnPNGA', 'eMP4', 'eMOVA'];
 function baseName() {
   const k = J.keyMode(S.project);
   return ((S.project.title || 'jizura').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'jizura') + (k ? (k === 'green' ? '_greenback' : '_blackback') : '');
@@ -1250,6 +1253,12 @@ async function runExport(kind) {
       const r = await J.exportMP4({ plan: S.plan, project: S.project, audio: S.project.includeAudio !== false ? S.audio : null, quality: S.project.quality || 'high', onProgress, signal: ac.signal });
       txt.textContent = `完成 ${(r.blob.size / 1048576).toFixed(1)}MB・${r.codec}${r.audio ? ' + ' + r.audio.toUpperCase() : ''}・${((performance.now() - t0) / 1000).toFixed(0)}秒`;
       const res = await J.saveFile(baseName() + '.mp4', r.blob);
+      if (res === 'declined') txt.textContent += '（保存はキャンセルされました）';
+    } else if (kind === 'mova') {
+      const r = await J.exportMOVAlpha({ plan: S.plan, project: S.project, audio: S.project.includeAudio !== false ? S.audio : null, onProgress, signal: ac.signal });
+      txt.textContent = `完成 ${(r.blob.size / 1048576).toFixed(1)}MB・${r.codec}${r.audio ? ' + ' + r.audio : ''}・${((performance.now() - t0) / 1000).toFixed(0)}秒`;
+      const raw = ((S.project.title || 'jizura').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'jizura');
+      const res = await J.saveFile(raw + '_alpha.mov', r.blob);
       if (res === 'declined') txt.textContent += '（保存はキャンセルされました）';
     } else {
       const blob = await J.exportPNGZip({ plan: S.plan, project: S.project, transparent: kind === 'pnga', onProgress, signal: ac.signal });
@@ -1439,6 +1448,13 @@ function bind() {
   ['outRes', 'eRes'].forEach(id => $(id).addEventListener('change', e => { S.project.res = +e.target.value; syncOut(); autosave(); codecNote(); }));
   ['outFps', 'eFps'].forEach(id => $(id).addEventListener('change', e => { S.project.fps = +e.target.value; syncOut(); replan(); codecNote(); }));
   $('outQuality').addEventListener('change', e => { S.project.quality = e.target.value; autosave(); });
+  ['outAlphaBg', 'eAlphaBg'].forEach(id => $(id).addEventListener('input', e => {
+    const pct = J.clamp(+e.target.value || 0, 0, 100);
+    S.project.alphaBgOpacity = pct / 100;
+    for (const sid of ['outAlphaBg', 'eAlphaBg']) if ($(sid) && $(sid) !== e.target) $(sid).value = String(pct);
+    for (const oid of ['outAlphaBgValue', 'eAlphaBgValue']) if ($(oid)) $(oid).textContent = Math.round(pct) + '%';
+    autosave();
+  }));
   ['outKey', 'eKey'].forEach(id => $(id).addEventListener('change', e => {
     S.project.keyBg = e.target.value; syncOut(); replan(); flushSave();
     const k = J.keyMode(S.project);
@@ -1446,10 +1462,12 @@ function bind() {
   }));
   $('outAudio').addEventListener('change', e => { S.project.includeAudio = e.target.checked; autosave(); });
   $('btnMP4').addEventListener('click', () => runExport('mp4'));
+  $('btnMOVA').addEventListener('click', () => runExport('mova'));
   $('btnPNG').addEventListener('click', () => runExport('png'));
   $('btnPNGA').addEventListener('click', () => runExport('pnga'));
   document.querySelectorAll('.exp-cancel').forEach(b => b.addEventListener('click', () => { if (S.exporting) S.exporting.abort(); }));
   $('eMP4').addEventListener('click', () => runExport('mp4'));
+  $('eMOVA').addEventListener('click', () => runExport('mova'));
   // かんたんモード
   $('modeEasy').addEventListener('click', () => setMode('easy'));
   $('modePro').addEventListener('click', () => setMode('pro'));

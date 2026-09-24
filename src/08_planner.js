@@ -18,6 +18,7 @@ J.defaultProject = () => ({
   wa: true,                       // …and the 和風 motifs (提灯・障子・家紋…) — applied after 'extra'
   keyBg: 'off',                   // 合成用の背景: 'off' | 'green' (グリーンバック) | 'black' (ブラックバック)
   previewVolume: 1,                 // editor playback only; exports always use the source audio at 100%
+  alphaBgOpacity: 0,               // alpha MOV background opacity: 0 = transparent, 1 = opaque
   seed: 20260922,
   aspect: '16:9', res: 1080, fps: 24,
   fx: { motion: 0.7, glitch: 0.55, chroma: 0.7, decor: 0.5, density: 0.55, texture: 0.6, flash: true, onTwos: true, koma: 12, hud: 'auto', bgSwitch: 0.35 },

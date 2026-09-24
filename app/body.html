@@ -134,7 +134,16 @@
             <label class="field">fps<select id="eFps"><option>24</option><option>30</option><option>60</option></select></label>
             <label class="field field-wide">背景<select id="eKey"><option value="off">通常（スタイルの背景）</option><option value="green">グリーンバック（合成用）</option><option value="black">ブラックバック（合成用）</option></select></label>
           </div>
-          <div class="outbtns"><button id="eMP4" class="primary">MP4 を書き出す</button></div>
+          <label class="alpha-bg-control">
+            <span>透過MOV 背景の不透明度</span>
+            <input id="eAlphaBg" type="range" min="0" max="100" step="1" value="0">
+            <output id="eAlphaBgValue" class="mono">0%</output>
+            <small>0% = 完全透過 / 50% = 半透明 / 100% = 通常背景</small>
+          </label>
+          <div class="outbtns">
+            <button id="eMP4" class="primary">MP4 を書き出す</button>
+            <button id="eMOVA">透過MOV（アルファ）</button>
+          </div>
           <button class="terms-open linkish">書き出した動画の権利について</button>
           <div class="exp-box" hidden>
             <div class="progress"><i class="exp-bar"></i></div>
@@ -205,11 +214,19 @@
         </div>
         <p class="note key-note">グリーンバック／ブラックバックにすると、白い文字と演出だけを単色の背景の上に描きます（背景の模様・紙の質感・粒子・周辺減光は入りません）。プレビューにもそのまま反映されます。グリーンバックは動画編集ソフトのクロマキーで、ブラックバックは「スクリーン」合成や輝度キーで抜いて、別の映像の上に重ねられます。</p>
         <label class="row" style="gap:6px;margin-top:10px"><input id="outAudio" type="checkbox" checked> 曲を動画に含める</label>
+        <label class="alpha-bg-control">
+          <span>透過MOV 背景の不透明度</span>
+          <input id="outAlphaBg" type="range" min="0" max="100" step="1" value="0">
+          <output id="outAlphaBgValue" class="mono">0%</output>
+          <small>0% = 完全透過 / 50% = 半透明 / 100% = 通常背景</small>
+        </label>
         <div class="outbtns">
           <button id="btnMP4" class="primary">MP4 を書き出す</button>
+          <button id="btnMOVA" class="accent">透過MOV（アルファ付き）</button>
           <button id="btnPNG">連番PNG（ZIP）</button>
           <button id="btnPNGA">透過PNG（ZIP・背景なし）</button>
         </div>
+        <p class="note">透過MOVはPNGコーデックのロスレスRGBA動画です。文字や前景エフェクトはそのまま、背景レイヤーだけ透明度を調整できます。ファイルサイズはMP4より大きくなります。「曲を動画に含める」がONならPCM音声も含めます。</p>
         <div class="exp-box" hidden style="margin-top:12px">
           <div class="progress"><i class="exp-bar"></i></div>
           <div class="row" style="justify-content:space-between;margin-top:6px"><span class="exp-text muted mono">—</span><button class="exp-cancel ghost small">中止</button></div>
