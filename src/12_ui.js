@@ -1673,10 +1673,15 @@ function bind() {
   const tl = $('timeline');
   let drag = false;
   tl.addEventListener('pointerdown', e => {
-    // Any press on a timeline item first focuses the corresponding row in
-    // "行とカット". Action icons / boundary dragging can then handle the same press.
-    const pressedHit = timelineHitAtPointer(e);
-    if (pressedHit && pressedHit.line >= 0) revealLineInList(pressedHit.line);
+    // Any press in the cut band focuses the cut that is active at that time.
+    // Use timeline time rather than canvas hit pixels so DPR / zoom cannot break
+    // navigation to the matching "行とカット" row.
+    const tr = tl.getBoundingClientRect();
+    const inCutBand = e.clientY >= tr.top + tr.height * 0.30 && e.clientY <= tr.bottom - 8;
+    if (inCutBand) {
+      const pressedCut = J.cutAt(S.plan, timelineTimeAt(e));
+      if (pressedCut && pressedCut.line >= 0) revealLineInList(pressedCut.line);
+    }
     const a = timelineActionAt(e);
     if (a) {
       e.preventDefault(); e.stopPropagation();
