@@ -27,7 +27,8 @@ J.defaultProject = () => ({
   overrides: {},
   colors: { enabled: false },
   fonts: {},
-  ui: { lineSortByTime: false, lyricsHeight: null },
+  assets: { images: {} },
+  ui: { lineSortByTime: false, lyricsHeight: null, leftWidth: null, previewHeight: null },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -53,6 +54,15 @@ J.parseLyrics = (raw) => {
     while ((m = s.match(/^\[(\d+):(\d+(?:[.:]\d+)?)\]/))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); s = s.slice(m[0].length); }
     s = s.trim();
     const sourceBody = s;
+    const imageMatch = s.match(/^\[img:([A-Za-z0-9_-]+)\]$/i);
+    if (imageMatch) {
+      const imageId = imageMatch[1];
+      const base = { text: '[画像]', note: null, impact: false, emph: [], manual: null, gapBefore: pendingGap, sourceIndex, sourceBody, imageId };
+      pendingGap = false;
+      if (times.length) times.forEach(t => lines.push(Object.assign({}, base, { lrc: t })));
+      else lines.push(Object.assign({}, base, { lrc: null }));
+      return;
+    }
     let note = null;
     const bar = s.indexOf('|');
     if (bar >= 0) { note = s.slice(bar + 1).trim() || null; s = s.slice(0, bar).trim(); }
@@ -227,7 +237,22 @@ J.plan = (project, audio) => {
     const n = [...ln.text.replace(/\s+/g, '')].length;
     const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
     const D = Math.max(0.05, visEnd - s);
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey, imageId: ln.imageId || null });
+    if (ln.imageId) {
+      plan.lines[li].chunks = ['[画像]'];
+      const dur = Math.max(0.05, visEnd - s);
+      plan.cuts.push(makeCut({
+        text: '[画像]', lineText: '[画像]', note: null, line: li, lineCut: 0,
+        start: s, end: visEnd, manualEnd, layout: 'image', assetId: ln.imageId,
+        enter: 'blur', exit: 'blur', hold: 'still',
+        inDur: Math.min(0.35, dur * 0.28), outDur: Math.min(0.3, dur * 0.24),
+        params: { imageScale: 0.72 }, decor: [], scheme: 0, styleKey: lineStyleKey,
+        seed: J.h(lineSeed, 0, 17), emph: false, recap: false, words: [],
+        stagger: 0, treat: 'none', treatP: {}, bg: 'none', bgP: {}, cam: 'push', camP: {},
+        trans: null, transP: {}, transDur: 0
+      }));
+      return;
+    }
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
