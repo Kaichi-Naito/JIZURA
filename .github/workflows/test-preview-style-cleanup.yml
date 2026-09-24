@@ -112,7 +112,7 @@ jobs:
                   await page.evaluate("""() => {
                     J.ui.project.ui.leftWidth=500;
                     J.uiApi.applyWorkspaceUi();
-                    J.ui.project.lyrics='FIRST LINE\nSECOND LINE';
+                    J.ui.project.lyrics=['FIRST LINE','SECOND LINE'].join(String.fromCharCode(10));
                     J.ui.project.timing.lineTimes={0:123.45,1:156.78};
                     J.ui.project.timing.lineEnds={0:150.67,1:180.89};
                     J.uiApi.replan();
@@ -132,7 +132,7 @@ jobs:
 
                   # 3) Image feature is gone. Legacy image tokens are ignored safely.
                   image_removed=await page.evaluate("""async () => {
-                    const parsed=J.parseLyrics('A\n[img:legacy123]\nB').lines.map(x=>x.text);
+                    const parsed=J.parseLyrics(['A','[img:legacy123]','B'].join(String.fromCharCode(10))).lines.map(x=>x.text);
                     const p=J.defaultProject();
                     p.images={legacy123:{name:'old.png'}};
                     p._imageAssets=[{id:'legacy123',dataUrl:'data:image/png;base64,AA=='}];
