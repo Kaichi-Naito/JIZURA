@@ -918,40 +918,38 @@ function renderLines() {
   const ol = $('lineList'); ol.innerHTML = ''; S.lineEls = []; S.curLine = -2;
   const ov = S.project.overrides;
   const globalStyleName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
-  const styleOpts = '<option value="">全体（' + escapeHtml(globalStyleName) + '）</option>' + J.STYLE_ORDER.map(k => `<option value="${k}">${escapeHtml(J.STYLES[k].name)}</option>`).join('');
   const editLines = J.parseLyrics(S.project.lyrics).lines;
   const rows = S.plan.lines.map((ln, i) => ({ ln, i }));
   if (S.lineSortByTime) rows.sort((a, b) => (a.ln.start - b.ln.start) || (a.i - b.i));
   const sortBtn = $('btnSortLines');
   sortBtn.setAttribute('aria-pressed', String(S.lineSortByTime));
   sortBtn.title = S.lineSortByTime ? '歌詞の元の行順に戻す' : 'タイムコードの早い順（昇順）に並べる';
+
   rows.forEach(({ ln, i }) => {
     const o = ov[i] || {};
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
     const srcLine = editLines[i];
-    const isImage = !!(srcLine && srcLine.kind === 'image');
-    const imgMeta = isImage && S.project.images ? S.project.images[srcLine.imageId] : null;
-    const layoutName = isImage ? '画像' : (o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動');
-    const editableText = isImage ? ('🖼 ' + ((imgMeta && imgMeta.name) || '画像')) : (srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text);
+    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
+    const styleName = o.style && J.STYLES[o.style] ? J.STYLES[o.style].name : '全体（' + globalStyleName + '）';
+    const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
+
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="time-arrow" aria-hidden="true">→</span>
       <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
-      <input class="txt txt-edit${isImage ? ' image-line' : ''}" type="text" value="${escapeHtml(editableText)}" ${isImage ? 'readonly' : ''} title="${isImage ? '画像要素。元の歌詞欄では [img:…] として管理されます' : '歌詞を編集（Enterまたはフォーカスを外して確定）'}" aria-label="${i + 1}行目の${isImage ? '画像' : '歌詞'}">
+      <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       <div class="meta">
         <span class="cuts"></span>
         <span class="tools">
-          <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
+          <button type="button" class="style-trigger ghost" title="この行のスタイル。候補にマウスを置くと一時プレビュー">${escapeHtml(styleName)}</button>
           <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
         </span>
       </div>`;
-    const styleSel = li.querySelector('.line-style');
-    styleSel.value = o.style || '';
-    if (isImage) li.querySelector('.layout-trigger').disabled = true;
+
     li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -963,6 +961,7 @@ function renderLines() {
       } else delete S.project.timing.lineTimes[i];
       replan();
     });
+
     li.querySelector('.end-time').addEventListener('change', e => {
       if (!S.project.timing.lineEnds) S.project.timing.lineEnds = {};
       clearLineEndBoundaryOverrides(i);
@@ -971,33 +970,44 @@ function renderLines() {
       else S.project.timing.lineEnds[i] = +Math.max(ln.start + 0.05, v).toFixed(3);
       replan();
     });
+
     const txtEdit = li.querySelector('.txt-edit');
     const originalText = editableText;
-    if (!isImage) {
-      txtEdit.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
-        else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
-      });
-      txtEdit.addEventListener('change', () => {
-        if (txtEdit.value === originalText) return;
-        replaceLyricLineFromList(i, txtEdit.value);
-      });
-    }
-    styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
-    li.querySelector('.layout-trigger').addEventListener('click', e => { if (isImage) return; e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
+    txtEdit.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
+    });
+    txtEdit.addEventListener('change', () => {
+      if (txtEdit.value === originalText) return;
+      replaceLyricLineFromList(i, txtEdit.value);
+    });
+
+    li.querySelector('.style-trigger').addEventListener('click', e => {
+      e.stopPropagation();
+      openLineStyleMenu(e.currentTarget, i, o.style || '');
+    });
+    li.querySelector('.layout-trigger').addEventListener('click', e => {
+      e.stopPropagation();
+      openLayoutMenu(e.currentTarget, i, o.layout || '');
+    });
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
+
     const cutsEl = li.querySelector('.cuts');
-    S.plan.cuts.filter(c => c.line === i && J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special).forEach(c => {
-      const sp = document.createElement('span'); sp.textContent = J.LAYOUTS[c.layout].name; sp.title = `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
-      sp.style.borderColor = `hsla(${layoutHue(c.layout)},70%,58%,0.7)`;
-      sp.addEventListener('click', () => seek(c.start + Math.min(c.dur * 0.5, c.inDur + 0.05)));
+    S.plan.cuts.filter(cut => cut.line === i && J.LAYOUTS[cut.layout] && !J.LAYOUTS[cut.layout].special).forEach(cut => {
+      const sp = document.createElement('span');
+      sp.textContent = J.LAYOUTS[cut.layout].name;
+      sp.title = `${cut.text}｜${J.ENTER[cut.enter].name} → ${J.EXIT[cut.exit].name}`;
+      sp.style.borderColor = `hsla(${layoutHue(cut.layout)},70%,58%,0.7)`;
+      sp.addEventListener('click', () => seek(cut.start + Math.min(cut.dur * 0.5, cut.inDur + 0.05)));
       cutsEl.appendChild(sp);
     });
+
     ol.appendChild(li); S.lineEls[i] = li;
   });
   $('linesInfo').textContent = `${S.plan.lines.length}行 / ${S.plan.cuts.length}カット`;
 }
+
 function setOv(i, patch) {
   const cur = Object.assign({}, S.project.overrides[i] || {}, patch);
   for (const k of Object.keys(cur)) if (cur[k] === undefined || cur[k] === false || cur[k] === '') delete cur[k];
