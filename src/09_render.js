@@ -10,11 +10,18 @@ const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Mat
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
-  // Plans normally have no overlap, but a manual line end may deliberately
-  // extend an earlier item past later starts. Pick the latest-started cut that
-  // is still alive; if newer cuts have already ended, fall back to the older one.
-  for (let i = ans; i >= 0; i--) if (cs[i].start <= t && t < cs[i].end) return cs[i];
-  return null;
+  // Manual end times can create overlap between lyric lines. The later-started
+  // lyric line owns the foreground; within that line, use its latest active cut.
+  let best = null, bestLineStart = -Infinity, bestCutStart = -Infinity;
+  for (let i = 0; i <= ans; i++) {
+    const cut = cs[i];
+    if (!(cut.start <= t && t < cut.end)) continue;
+    const lineStart = cut.line >= 0 && plan.lines && plan.lines[cut.line] ? plan.lines[cut.line].start : cut.start;
+    if (lineStart > bestLineStart + 1e-9 || (Math.abs(lineStart - bestLineStart) <= 1e-9 && cut.start > bestCutStart)) {
+      best = cut; bestLineStart = lineStart; bestCutStart = cut.start;
+    }
+  }
+  return best;
 };
 J.cutsAt = (plan, t) => (plan.cuts || []).filter(c => c.start <= t && t < c.end);
 
