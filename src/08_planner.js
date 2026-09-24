@@ -25,9 +25,10 @@ J.defaultProject = () => ({
   enabled: Object.fromEntries(J.GROUP_KEYS.map(g => [g, Object.fromEntries(J.order(g).map(k => [k, true]))])),
   timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, lineEnds: {}, cutBoundaries: {}, lineScale: 1 },
   overrides: {},
+  images: {},
   colors: { enabled: false },
   fonts: {},
-  ui: { lineSortByTime: false, lyricsHeight: null },
+  ui: { lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -53,6 +54,15 @@ J.parseLyrics = (raw) => {
     while ((m = s.match(/^\[(\d+):(\d+(?:[.:]\d+)?)\]/))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); s = s.slice(m[0].length); }
     s = s.trim();
     const sourceBody = s;
+    const imgMatch = s.match(/^\[img:([A-Za-z0-9._-]+)\]$/i);
+    if (imgMatch) {
+      const imageId = imgMatch[1];
+      const base = { text: '@img:' + imageId, kind: 'image', imageId, note: null, impact: false, emph: [], manual: null, gapBefore: pendingGap, sourceIndex, sourceBody };
+      pendingGap = false;
+      if (times.length) times.forEach(t => lines.push(Object.assign({}, base, { lrc: t })));
+      else lines.push(Object.assign({}, base, { lrc: null }));
+      return;
+    }
     let note = null;
     const bar = s.indexOf('|');
     if (bar >= 0) { note = s.slice(bar + 1).trim() || null; s = s.slice(0, bar).trim(); }
@@ -146,7 +156,7 @@ J.computeTiming = (project, parsed, audio) => {
     else if (man != null && isFinite(man)) s = man;
     else {
       if (i > 0) {
-        const n = [...lines[i - 1].text].length;
+        const n = lines[i - 1].kind === 'image' ? 8 : [...lines[i - 1].text].length;
         let d = J.clamp(0.8 + n * 0.17, 1.3, 5.2) * (T.lineScale || 1);
         if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
         s = starts[i - 1] + d + (l.gapBefore ? (beat ? beat * 2 : 0.8) : 0);
@@ -158,7 +168,7 @@ J.computeTiming = (project, parsed, audio) => {
     const man = T.lineEnds && T.lineEnds[i] != null ? +T.lineEnds[i] : null;
     if (man != null && isFinite(man)) return Math.max(s + 0.05, man);
     if (i < starts.length - 1) return Math.max(s + 0.35, starts[i + 1]);
-    const n = [...lines[i].text].length;
+    const n = lines[i].kind === 'image' ? 8 : [...lines[i].text].length;
     let d = J.clamp(0.8 + n * 0.17, 1.5, 5.2) * (T.lineScale || 1);
     if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
     return s + d;
@@ -224,10 +234,27 @@ J.plan = (project, audio) => {
     // and a locked line can change when an unlocked line before it is shuffled.
     const history = [], bgHistory = [], fxHistory = [];
     let schemeIdx = 0;
-    const n = [...ln.text.replace(/\s+/g, '')].length;
-    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
+    const imageMeta = ln.kind === 'image' && project.images ? project.images[ln.imageId] : null;
+    const displayText = ln.kind === 'image' ? ('🖼 ' + ((imageMeta && imageMeta.name) || '画像')) : ln.text;
+    const n = ln.kind === 'image' ? 8 : [...ln.text.replace(/\s+/g, '')].length;
+    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(ln.kind === 'image' ? 2.4 : 3.6, n * 0.5 + 1.2));
     const D = Math.max(0.05, visEnd - s);
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    plan.lines.push({ index: li, text: displayText, sourceText: ln.text, kind: ln.kind || 'text', imageId: ln.imageId || null, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    if (ln.kind === 'image') {
+      plan.lines[li].chunks = [displayText];
+      const dur = visEnd - s;
+      const inDur = Math.min(0.35, Math.max(0.08, dur * 0.18));
+      const outDur = Math.min(0.35, Math.max(0.08, dur * 0.18));
+      plan.cuts.push(makeCut({
+        text: displayText, lineText: displayText, note: null, line: li, lineCut: 0, start: s, end: visEnd, manualEnd,
+        layout: 'image', enter: 'cut', exit: 'cut', hold: 'still', inDur, outDur,
+        params: J.LAYOUTS.image.plan(rng, { text: displayText, n: 1, W, H, dur }, lineSt),
+        decor: [], scheme: 0, styleKey: lineStyleKey, seed: J.h(lineSeed, 0, 17),
+        emph: false, recap: false, words: [], stagger: 0, treat: 'none', treatP: {}, bg: 'none', bgP: {}, cam: 'push', camP: {},
+        trans: null, transP: {}, transDur: 0, imageId: ln.imageId
+      }));
+      return;
+    }
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);

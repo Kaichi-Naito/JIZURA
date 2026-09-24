@@ -83,14 +83,29 @@ h2 { font-size: 11px; letter-spacing: 0.18em; color: var(--muted); }
 h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 18px; margin-bottom: 8px; }
 
 /* ---------- workspace ---------- */
-.work { flex: 1; display: grid; grid-template-columns: minmax(270px, 330px) minmax(0, 1fr) minmax(290px, 350px); min-height: 0; }
+.work {
+  --left-col: 330px;
+  flex: 1;
+  display: grid;
+  grid-template-columns: clamp(230px, var(--left-col), 560px) 6px minmax(0, 1fr) minmax(290px, 350px);
+  min-height: 0;
+}
 .col { min-width: 0; min-height: 0; }
 .col-left, .col-right { background: var(--panel); overflow: auto; }
-.col-left { border-right: 1px solid var(--line); }
+.col-left { border-right: 0; }
 .col-right { border-left: 1px solid var(--line); }
+.workspace-splitter { position: relative; z-index: 8; user-select: none; touch-action: none; }
+.splitter-v { cursor: col-resize; background: var(--line); }
+.splitter-v::after { content: ""; position: absolute; inset: 0 -3px; }
+.splitter-v:hover, .splitter-v.dragging { background: var(--cyan); }
+.splitter-h { flex: 0 0 6px; height: 6px; cursor: row-resize; background: var(--line); margin: 0; }
+.splitter-h::after { content: ""; position: absolute; inset: -3px 0; }
+.splitter-h:hover, .splitter-h.dragging { background: var(--cyan); }
 .sec { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .line-list-head-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lyrics-head-actions { display: flex; align-items: center; gap: 6px; }
+label.file.compact-file { padding: 3px 8px; font-size: 11px; }
 #lyrics { min-height: 150px; font-size: 14px; resize: vertical; }
 .syntax { font-size: 12px; color: var(--muted); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; }
 .syntax code { font-family: var(--mono); color: var(--amber); }
@@ -134,6 +149,7 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .txt { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
 .ln .txt:hover { border-color: var(--line2); }
 .ln .txt:focus { background: var(--ink); border-color: var(--amber); }
+.ln .txt.image-line { color: var(--cyan); cursor: default; border-color: rgba(22,244,212,0.25); }
 .ln > button.icon { width: 26px; height: 26px; padding: 3px 4px; }
 .ln .meta {
   grid-column: 2 / 8;
@@ -156,9 +172,10 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .cuts span:hover { color: var(--text); border-color: var(--amber); }
 
 /* ---------- stage ---------- */
-.col-stage { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; min-width: 0; }
-.viewport { position: relative; width: 100%; background: #000; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
-.viewport canvas { display: block; width: 100%; height: auto; max-height: 68vh; object-fit: contain; }
+.col-stage { display: flex; flex-direction: column; gap: 0; padding: 14px 16px; min-width: 0; min-height: 0; overflow: hidden; }
+.viewport { position: relative; width: 100%; flex: 1 1 auto; min-height: 120px; background: #000; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
+.viewport canvas { display: block; width: 100%; height: 100%; max-height: none; object-fit: contain; }
+.timeline-dock { flex: 0 0 150px; min-height: 96px; max-height: 58vh; display: flex; flex-direction: column; gap: 8px; padding-top: 8px; overflow: hidden; }
 .field-wide { grid-column: span 2; }
 .key-badge { position: absolute; right: 10px; top: 10px; background: rgba(12,12,14,0.78); border: 1px solid var(--line2); color: #fff; padding: 3px 8px; border-radius: var(--r); font-size: 11px; pointer-events: none; letter-spacing: .04em; }
 .key-badge i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.5); }
@@ -167,7 +184,7 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .transport .tc { font: 500 13px var(--mono); font-variant-numeric: tabular-nums; }
 .transport input[type=range] { flex: 1 1 160px; accent-color: var(--amber); }
 button.play { width: 40px; height: 34px; padding: 0; font-size: 14px; }
-#timeline { width: 100%; height: 76px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; touch-action: none; overscroll-behavior: contain; }
+#timeline { width: 100%; height: auto; min-height: 54px; flex: 1 1 auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; touch-action: none; overscroll-behavior: contain; }
 .cutinfo { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 26px; }
 .chip { font-size: 11px; padding: 2px 8px; border-radius: 2px; border: 1px solid var(--line2); color: var(--text); background: var(--raised); }
 .chip b { font-weight: 500; color: var(--muted); margin-right: 5px; }
@@ -296,12 +313,14 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .work { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .col-stage { grid-column: 1 / -1; order: -1; }
+  .splitter-v { display: none; }
+  .col-stage { grid-column: 1 / -1; order: -1; min-height: 560px; }
   .col-left { border-right: 1px solid var(--line); }
   .col-right { border-left: 0; }
 }
 @media (max-width: 760px) {
   .work { grid-template-columns: minmax(0, 1fr); }
+  .splitter-v, .splitter-h { display: none; }
   .col-left, .col-right { border: 0; border-top: 1px solid var(--line); }
   .bar { gap: 10px; }
   .brand .tag { display: none; }
@@ -351,8 +370,14 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
     <!-- ================= left: lyrics & timing ================= -->
     <section class="col col-left" aria-label="歌詞とタイミング">
       <div class="sec">
-        <div class="sec-h"><h2>歌詞</h2><button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button></div>
-        <textarea id="lyrics" rows="9" spellcheck="false" aria-label="歌詞（1行 = 1フレーズ）"></textarea>
+        <div class="sec-h">
+          <h2>歌詞</h2>
+          <div class="lyrics-head-actions">
+            <label class="file compact-file" title="画像を歌詞と同じ時間軸の要素として追加">画像を追加<input id="imageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button>
+          </div>
+        </div>
+        <textarea id="lyrics" rows="9" spellcheck="false" aria-label="歌詞（1行 = 1フレーズ。画像行も挿入できます）"></textarea>
         <div id="syntax" class="syntax" hidden>
           <ul>
             <li>1行が1フレーズ。空行は少し間を空けます</li>
@@ -361,6 +386,7 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
             <li>行末の <code>!</code> … フラッシュと揺れを入れる</li>
             <li><code>歌詞|ruby or note</code> … 注釈レイアウトの小さな文字</li>
             <li><code>[01:23.45]歌詞</code> … LRC のタイムスタンプをそのまま使用</li>
+            <li><code>[img:…]</code> … 「画像を追加」で挿入される画像要素（通常は手入力不要）</li>
             <li><code>#</code> で始まる行 … コメント（無視）</li>
           </ul>
         </div>
@@ -407,24 +433,28 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
         <ol id="lineList"></ol>
       </div>
     </section>
+    <div id="leftSplitter" class="workspace-splitter splitter-v" role="separator" aria-orientation="vertical" aria-label="左パネルの幅を変更" tabindex="0"></div>
 
     <!-- ================= center: stage ================= -->
     <section class="col col-stage" aria-label="プレビュー">
       <div class="viewport" id="viewport"><canvas id="view" width="1280" height="720"></canvas><div id="viewMsg" class="overlay-msg" hidden></div><div id="keyBadge" class="key-badge" hidden></div><div id="toast" class="toast" role="status" aria-live="polite" hidden></div></div>
-      <div class="transport">
-        <button id="btnPlay" class="play" aria-label="再生">▶</button>
-        <span id="timeNow" class="tc">00:00.00</span><span class="tc muted">/</span><span id="timeDur" class="tc muted">00:00.00</span>
-        <input id="scrub" type="range" min="0" max="10000" value="0" aria-label="再生位置">
-        <button id="btnLoop" class="ghost small" aria-pressed="true">ループ</button>
-        <span class="hist-btns">
-          <button id="btnPrev" class="ghost small icon-txt" title="前の案に戻る" aria-label="前の案">◀</button>
-          <button id="btnNext" class="ghost small icon-txt" title="次の案へ進む" aria-label="次の案">▶</button>
-        </span>
-        <button id="btnShuffle" class="accent" title="設定はそのままで構成だけ再抽選（ロックした行は維持）">シャッフル</button>
-        <button id="btnOmakase" class="primary" title="スタイル・雰囲気・演出・配色をまるごとランダムに（キー R）">おまかせ</button>
+      <div id="stageSplitter" class="workspace-splitter splitter-h" role="separator" aria-orientation="horizontal" aria-label="タイムライン領域の高さを変更" tabindex="0"></div>
+      <div id="timelineDock" class="timeline-dock">
+        <div class="transport">
+          <button id="btnPlay" class="play" aria-label="再生">▶</button>
+          <span id="timeNow" class="tc">00:00.00</span><span class="tc muted">/</span><span id="timeDur" class="tc muted">00:00.00</span>
+          <input id="scrub" type="range" min="0" max="10000" value="0" aria-label="再生位置">
+          <button id="btnLoop" class="ghost small" aria-pressed="true">ループ</button>
+          <span class="hist-btns">
+            <button id="btnPrev" class="ghost small icon-txt" title="前の案に戻る" aria-label="前の案">◀</button>
+            <button id="btnNext" class="ghost small icon-txt" title="次の案へ進む" aria-label="次の案">▶</button>
+          </span>
+          <button id="btnShuffle" class="accent" title="設定はそのままで構成だけ再抽選（ロックした行は維持）">シャッフル</button>
+          <button id="btnOmakase" class="primary" title="スタイル・雰囲気・演出・配色をまるごとランダムに（キー R）">おまかせ</button>
+        </div>
+        <canvas id="timeline" aria-label="タイムライン（クリックで移動、カットをクリックすると左の行へ移動、境界をドラッグして開始時刻を調整、ホイールで拡大縮小）"></canvas>
+        <div class="cutinfo" id="cutInfo"></div>
       </div>
-      <canvas id="timeline" aria-label="タイムライン（クリックで移動、境界をドラッグして開始時刻を調整、ホイールで拡大縮小）"></canvas>
-      <div class="cutinfo" id="cutInfo"></div>
     </section>
 
     <!-- ================= right: look & output ================= -->
@@ -2068,6 +2098,36 @@ J.taggedWith = (group, mood) => J.order(group).filter(k => { const d = J.registr
 'use strict';
 const E = J.E;
 
+J.IMAGE_ASSETS = J.IMAGE_ASSETS || new Map();
+J.setImageAsset = async (id, source) => {
+  if (!id || !source) return null;
+  let blob = source;
+  if (typeof source === 'string') {
+    const res = await fetch(source); blob = await res.blob();
+  }
+  let img = null;
+  if (typeof createImageBitmap === 'function' && blob instanceof Blob) {
+    try { img = await createImageBitmap(blob); } catch (e) {}
+  }
+  if (!img) {
+    const url = blob instanceof Blob ? URL.createObjectURL(blob) : String(source);
+    img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => { if (blob instanceof Blob) URL.revokeObjectURL(url); resolve(el); };
+      el.onerror = () => { if (blob instanceof Blob) URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+      el.src = url;
+    });
+  }
+  J.IMAGE_ASSETS.set(id, img);
+  return img;
+};
+J.getImageAsset = id => J.IMAGE_ASSETS.get(id) || null;
+J.removeImageAsset = id => {
+  const img = J.IMAGE_ASSETS.get(id);
+  try { if (img && typeof img.close === 'function') img.close(); } catch (e) {}
+  J.IMAGE_ASSETS.delete(id);
+};
+
 /* ---------- main-item pipeline: enter / hold / exit + draw ---------- */
 J.mainDraw = (env, it) => {
   const cut = env.cut;
@@ -2674,6 +2734,37 @@ J.LAYOUTS = {
     },
   },
 
+  /* ------------------------------------------------ special: project image */
+  image: {
+    name: '画像', special: true, fits: () => false,
+    plan: () => ({ maxW: 0.82, maxH: 0.78 }),
+    render(env) {
+      if (env.pass !== 'main') return null;
+      const img = J.getImageAsset && J.getImageAsset(env.cut.imageId);
+      const { W, H, ctx, sc } = env, P = env.cut.params || {};
+      const pIn = E.outCubic(env.pIn), pOut = E.inCubic(env.pOut);
+      const a = J.clamp(pIn * (1 - pOut));
+      if (!img) {
+        const w = W * 0.42, h = H * 0.28;
+        ctx.save(); ctx.globalAlpha = Math.max(0.35, a);
+        ctx.strokeStyle = sc.sub; ctx.lineWidth = Math.max(1, H * 0.002);
+        ctx.strokeRect(W / 2 - w / 2, H / 2 - h / 2, w, h);
+        ctx.restore();
+        return { x0: W / 2 - w / 2, x1: W / 2 + w / 2, y0: H / 2 - h / 2, y1: H / 2 + h / 2, cx: W / 2, cy: H / 2, boxes: [] };
+      }
+      const iw = img.width || img.naturalWidth || 1, ih = img.height || img.naturalHeight || 1;
+      const fit = Math.min(W * (P.maxW || 0.82) / iw, H * (P.maxH || 0.78) / ih);
+      const pulse = 0.94 + 0.06 * E.outBack(env.pIn, 1.2) - 0.025 * pOut;
+      const w = iw * fit * pulse, h = ih * fit * pulse;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(W / 2, H / 2);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+      return { x0: W / 2 - w / 2, x1: W / 2 + w / 2, y0: H / 2 - h / 2, y1: H / 2 + h / 2, cx: W / 2, cy: H / 2, boxes: [] };
+    },
+  },
+
   /* ------------------------------------------------ special: title card */
   title: {
     name: 'タイトル', special: true, fits: () => false,
@@ -2998,9 +3089,10 @@ J.defaultProject = () => ({
   enabled: Object.fromEntries(J.GROUP_KEYS.map(g => [g, Object.fromEntries(J.order(g).map(k => [k, true]))])),
   timing: { bpm: 0, offset: 0.4, snap: true, tail: 0.9, lineTimes: {}, lineEnds: {}, cutBoundaries: {}, lineScale: 1 },
   overrides: {},
+  images: {},
   colors: { enabled: false },
   fonts: {},
-  ui: { lineSortByTime: false, lyricsHeight: null },
+  ui: { lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -3026,6 +3118,15 @@ J.parseLyrics = (raw) => {
     while ((m = s.match(/^\[(\d+):(\d+(?:[.:]\d+)?)\]/))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); s = s.slice(m[0].length); }
     s = s.trim();
     const sourceBody = s;
+    const imgMatch = s.match(/^\[img:([A-Za-z0-9._-]+)\]$/i);
+    if (imgMatch) {
+      const imageId = imgMatch[1];
+      const base = { text: '@img:' + imageId, kind: 'image', imageId, note: null, impact: false, emph: [], manual: null, gapBefore: pendingGap, sourceIndex, sourceBody };
+      pendingGap = false;
+      if (times.length) times.forEach(t => lines.push(Object.assign({}, base, { lrc: t })));
+      else lines.push(Object.assign({}, base, { lrc: null }));
+      return;
+    }
     let note = null;
     const bar = s.indexOf('|');
     if (bar >= 0) { note = s.slice(bar + 1).trim() || null; s = s.slice(0, bar).trim(); }
@@ -3119,7 +3220,7 @@ J.computeTiming = (project, parsed, audio) => {
     else if (man != null && isFinite(man)) s = man;
     else {
       if (i > 0) {
-        const n = [...lines[i - 1].text].length;
+        const n = lines[i - 1].kind === 'image' ? 8 : [...lines[i - 1].text].length;
         let d = J.clamp(0.8 + n * 0.17, 1.3, 5.2) * (T.lineScale || 1);
         if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
         s = starts[i - 1] + d + (l.gapBefore ? (beat ? beat * 2 : 0.8) : 0);
@@ -3131,7 +3232,7 @@ J.computeTiming = (project, parsed, audio) => {
     const man = T.lineEnds && T.lineEnds[i] != null ? +T.lineEnds[i] : null;
     if (man != null && isFinite(man)) return Math.max(s + 0.05, man);
     if (i < starts.length - 1) return Math.max(s + 0.35, starts[i + 1]);
-    const n = [...lines[i].text].length;
+    const n = lines[i].kind === 'image' ? 8 : [...lines[i].text].length;
     let d = J.clamp(0.8 + n * 0.17, 1.5, 5.2) * (T.lineScale || 1);
     if (beat) d = Math.max(2, Math.round(d / beat)) * beat;
     return s + d;
@@ -3197,10 +3298,27 @@ J.plan = (project, audio) => {
     // and a locked line can change when an unlocked line before it is shuffled.
     const history = [], bgHistory = [], fxHistory = [];
     let schemeIdx = 0;
-    const n = [...ln.text.replace(/\s+/g, '')].length;
-    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
+    const imageMeta = ln.kind === 'image' && project.images ? project.images[ln.imageId] : null;
+    const displayText = ln.kind === 'image' ? ('🖼 ' + ((imageMeta && imageMeta.name) || '画像')) : ln.text;
+    const n = ln.kind === 'image' ? 8 : [...ln.text.replace(/\s+/g, '')].length;
+    const visEnd = manualEnd ? e : Math.min(e, s + Math.max(ln.kind === 'image' ? 2.4 : 3.6, n * 0.5 + 1.2));
     const D = Math.max(0.05, visEnd - s);
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    plan.lines.push({ index: li, text: displayText, sourceText: ln.text, kind: ln.kind || 'text', imageId: ln.imageId || null, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    if (ln.kind === 'image') {
+      plan.lines[li].chunks = [displayText];
+      const dur = visEnd - s;
+      const inDur = Math.min(0.35, Math.max(0.08, dur * 0.18));
+      const outDur = Math.min(0.35, Math.max(0.08, dur * 0.18));
+      plan.cuts.push(makeCut({
+        text: displayText, lineText: displayText, note: null, line: li, lineCut: 0, start: s, end: visEnd, manualEnd,
+        layout: 'image', enter: 'cut', exit: 'cut', hold: 'still', inDur, outDur,
+        params: J.LAYOUTS.image.plan(rng, { text: displayText, n: 1, W, H, dur }, lineSt),
+        decor: [], scheme: 0, styleKey: lineStyleKey, seed: J.h(lineSeed, 0, 17),
+        emph: false, recap: false, words: [], stagger: 0, treat: 'none', treatP: {}, bg: 'none', bgP: {}, cam: 'push', camP: {},
+        trans: null, transP: {}, transDur: 0, imageId: ln.imageId
+      }));
+      return;
+    }
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
@@ -29159,7 +29277,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineCutHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -29195,10 +29313,11 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.images = (p && p.images) || {};
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -29296,17 +29415,18 @@ function editorRedo() {
    Browsers do not expose a reusable full local file path from <input type=file>.
    Store the source audio bytes in IndexedDB for automatic restore, and embed them
    in an explicitly saved .jizura.json so the project remains portable. */
-const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio';
+const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio', IMAGE_STORE = 'images';
 let audioDbJob = null;
 function openAudioDb() {
   if (!window.indexedDB) return Promise.resolve(null);
   if (audioDbJob) return audioDbJob;
   audioDbJob = new Promise((resolve, reject) => {
     let req;
-    try { req = indexedDB.open(AUDIO_DB_NAME, 1); } catch (e) { reject(e); return; }
+    try { req = indexedDB.open(AUDIO_DB_NAME, 2); } catch (e) { reject(e); return; }
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(IMAGE_STORE)) db.createObjectStore(IMAGE_STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
@@ -29347,9 +29467,48 @@ async function deleteStoredAudio(id) {
     });
   } catch (e) { console.warn('audio cleanup', e); }
 }
+
+async function putStoredImage(meta, file) {
+  const db = await openAudioDb(); if (!db) throw new Error('このブラウザでは画像の自動保存を利用できません');
+  const blob = file instanceof Blob ? file.slice(0, file.size, file.type || meta.type || '') : new Blob([file], { type: meta.type || '' });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, 'readwrite');
+    tx.objectStore(IMAGE_STORE).put({ id: meta.id, name: meta.name, type: meta.type || '', size: blob.size, lastModified: meta.lastModified || 0, width: meta.width || 0, height: meta.height || 0, blob });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('画像を保存できませんでした'));
+    tx.onabort = () => reject(tx.error || new Error('画像の保存が中断されました'));
+  });
+}
+async function getStoredImage(id) {
+  if (!id) return null;
+  try {
+    const db = await openAudioDb(); if (!db) return null;
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readonly'), req = tx.objectStore(IMAGE_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.warn('image restore', e); return null; }
+}
+async function deleteStoredImage(id) {
+  if (!id) return;
+  try {
+    const db = await openAudioDb(); if (!db) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readwrite');
+      tx.objectStore(IMAGE_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('image cleanup', e); }
+}
 function newAudioId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
   return 'audio-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+function newImageId() {
+  try { if (crypto && crypto.randomUUID) return 'img-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20); } catch (e) {}
+  return 'img-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 function audioMeta(file, id) {
   return { id, name: file.name || 'audio', type: file.type || '', size: file.size || 0, lastModified: file.lastModified || 0 };
@@ -29427,6 +29586,72 @@ async function restoreEmbeddedAudio(asset) {
     return false;
   }
 }
+
+async function attachProjectImage(file, opt = {}) {
+  const id = opt.id || newImageId();
+  const img = await J.setImageAsset(id, file);
+  const meta = {
+    id, name: file.name || (opt.name || 'image'),
+    type: file.type || opt.type || 'image/png',
+    size: file.size || 0, lastModified: file.lastModified || 0,
+    width: img && (img.width || img.naturalWidth) || opt.width || 0,
+    height: img && (img.height || img.naturalHeight) || opt.height || 0,
+  };
+  S.project.images = Object.assign({}, S.project.images || {}, { [id]: meta });
+  if (opt.persist !== false) await putStoredImage(meta, file);
+  return meta;
+}
+async function restoreProjectImages() {
+  const imgs = S.project && S.project.images || {};
+  let restored = 0;
+  for (const [id, meta] of Object.entries(imgs)) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    try { await J.setImageAsset(id, rec.blob); restored++; } catch (e) { console.warn('image restore asset', id, e); }
+  }
+  return restored;
+}
+async function restoreEmbeddedImages(items) {
+  let restored = 0;
+  for (const a of items || []) {
+    try {
+      const file = await embeddedToFile(a);
+      if (!file) continue;
+      const meta = await attachProjectImage(file, {
+        id: a.id, persist: true, name: a.name, type: a.type, width: a.width, height: a.height
+      });
+      if (meta) restored++;
+    } catch (e) { console.warn('embedded image restore', a && a.id, e); }
+  }
+  return restored;
+}
+function insertImageToken(id) {
+  const ta = $('lyrics'), prev = S.project.lyrics || '';
+  let pos = ta && Number.isFinite(ta.selectionStart) ? ta.selectionStart : prev.length;
+  pos = J.clamp(pos, 0, prev.length);
+  let lineEnd = prev.indexOf('\n', pos);
+  if (lineEnd < 0) lineEnd = prev.length;
+  const before = prev.slice(0, lineEnd);
+  const after = prev.slice(lineEnd);
+  const token = '[img:' + id + ']';
+  const sepA = before && !before.endsWith('\n') ? '\n' : '';
+  const sepB = after && !after.startsWith('\n') ? '\n' : '';
+  const next = before + sepA + token + sepB + after;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next;
+  ta.value = next;
+  const caret = (before + sepA + token).length;
+  try { ta.setSelectionRange(caret, caret); } catch (e) {}
+  replan();
+}
+async function addImageFile(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/i.test(file.type || '')) throw new Error('PNG / JPEG / WebP の画像を選んでください');
+  const meta = await attachProjectImage(file, { persist: true });
+  insertImageToken(meta.id);
+  flushSave();
+  toast('画像を追加しました');
+  return meta;
+}
 async function projectPayloadForSave() {
   // Text inputs replan on a short debounce. If Save is clicked inside that window,
   // force the pending plan update before freezing the project.
@@ -29451,6 +29676,17 @@ async function projectPayloadForSave() {
       dataUrl: await blobToDataUrl(file),
     };
   }
+  out._imageAssets = [];
+  for (const [id, meta] of Object.entries(out.images || {})) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    out._imageAssets.push({
+      id, name: meta.name || rec.name || 'image', type: meta.type || rec.type || rec.blob.type || 'image/png',
+      size: rec.blob.size, lastModified: meta.lastModified || rec.lastModified || 0,
+      width: meta.width || rec.width || 0, height: meta.height || rec.height || 0,
+      dataUrl: await blobToDataUrl(rec.blob),
+    });
+  }
   return out;
 }
 async function applyProjectData(raw) {
@@ -29458,10 +29694,13 @@ async function applyProjectData(raw) {
   S.audio = null; S.audioSource = null;
   const p = Object.assign({}, raw || {});
   const embedded = p._audioAsset || null;
-  delete p._audioAsset;
+  const embeddedImages = Array.isArray(p._imageAssets) ? p._imageAssets : [];
+  delete p._audioAsset; delete p._imageAssets;
   S.project = mergeProject(p);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
+  if (embeddedImages.length) await restoreEmbeddedImages(embeddedImages);
+  else await restoreProjectImages();
   syncUI();
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
@@ -29542,7 +29781,7 @@ function planInputKey(project) {
     extra: project.extra === true, wa: project.wa !== false, keyBg: project.keyBg || 'off',
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
-    overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
+    overrides: project.overrides || {}, images: project.images || {}, colors: project.colors || {}, fonts: project.fonts || {},
     userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
@@ -29682,6 +29921,7 @@ function showMsg(m) { const el = $('viewMsg'); if (!m) { el.hidden = true; retur
 
 /* ---------------- viewport & drawing ---------------- */
 function sizeViewport() {
+  if (!S.plan) return;
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
   let cssW = vp.clientWidth || 800, cssH = cssW / ar;
@@ -29763,11 +30003,13 @@ function followTimelinePlayhead() {
   return true;
 }
 function drawTimeline() {
+  if (!S.plan) return;
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d'), V = timelineView(), X = t => (t - V.start) / V.span * w;
   S.timelineActionHits = [];
+  S.timelineCutHits = [];
   x.fillStyle = '#131316'; x.fillRect(0, 0, w, h);
   if (S.audio && S.audio.peaks) {
     const pk = S.audio.peaks, n = pk.length, sd = S.audio.duration;
@@ -29791,6 +30033,7 @@ function drawTimeline() {
   for (const cut of S.plan.cuts) {
     if (cut.end <= V.start || cut.start >= V.end) continue;
     const x0 = X(Math.max(cut.start, V.start)), x1 = X(Math.min(cut.end, V.end));
+    S.timelineCutHits.push({ x: x0, y: top, w: Math.max(1, x1 - x0), h: bot - top, line: cut.line, cutIndex: cut.index, start: cut.start, end: cut.end });
     const hue = layoutHue(cut.layout);
     x.fillStyle = `hsla(${hue},70%,58%,0.28)`; x.fillRect(x0, top, Math.max(1, x1 - x0 - 1), bot - top);
     x.fillStyle = `hsla(${hue},80%,62%,0.95)`; x.fillRect(x0, top, Math.max(1, 2 * dpr), bot - top);
@@ -29901,6 +30144,26 @@ function timelineTimeAt(ev) {
   const r = $('timeline').getBoundingClientRect(), V = timelineView();
   const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
   return V.start + p * V.span;
+}
+function revealLineInList(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect(), margin = 8;
+  if (er.top < lr.top + margin) list.scrollTop -= (lr.top + margin) - er.top;
+  else if (er.bottom > lr.bottom - margin) list.scrollTop += er.bottom - (lr.bottom - margin);
+}
+function timelineCutAtPointer(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
+  const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
+  for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
+    const h = S.timelineCutHits[i];
+    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
+      return S.plan.cuts[h.cutIndex] || null;
+    }
+  }
+  return null;
 }
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
@@ -30045,14 +30308,16 @@ function renderLines() {
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
-    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
-    const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
+    const isImage = !!(srcLine && srcLine.kind === 'image');
+    const imgMeta = isImage && S.project.images ? S.project.images[srcLine.imageId] : null;
+    const layoutName = isImage ? '画像' : (o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動');
+    const editableText = isImage ? ('🖼 ' + ((imgMeta && imgMeta.name) || '画像')) : (srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text);
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="time-arrow" aria-hidden="true">→</span>
       <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
-      <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
+      <input class="txt txt-edit${isImage ? ' image-line' : ''}" type="text" value="${escapeHtml(editableText)}" ${isImage ? 'readonly' : ''} title="${isImage ? '画像要素。元の歌詞欄では [img:…] として管理されます' : '歌詞を編集（Enterまたはフォーカスを外して確定）'}" aria-label="${i + 1}行目の${isImage ? '画像' : '歌詞'}">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       <div class="meta">
@@ -30064,6 +30329,7 @@ function renderLines() {
       </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
+    if (isImage) li.querySelector('.layout-trigger').disabled = true;
     li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -30085,16 +30351,18 @@ function renderLines() {
     });
     const txtEdit = li.querySelector('.txt-edit');
     const originalText = editableText;
-    txtEdit.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
-    });
-    txtEdit.addEventListener('change', () => {
-      if (txtEdit.value === originalText) return;
-      replaceLyricLineFromList(i, txtEdit.value);
-    });
+    if (!isImage) {
+      txtEdit.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
+      });
+      txtEdit.addEventListener('change', () => {
+        if (txtEdit.value === originalText) return;
+        replaceLyricLineFromList(i, txtEdit.value);
+      });
+    }
     styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
-    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { if (isImage) return; e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
@@ -30523,8 +30791,76 @@ function tapNow() {
 function stopTap() { S.tap = null; $('tapPanel').hidden = true; $('btnTap').setAttribute('aria-pressed', 'false'); replan(); }
 function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textContent = ln ? `${S.tap.i + 1}. ${ln.text}` : '—'; }
 
+/* ---------------- workspace sizing ---------------- */
+function applyWorkspaceUi() {
+  if (!S.project) return;
+  S.project.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, S.project.ui || {});
+  const work = document.querySelector('.work'), dock = $('timelineDock');
+  const left = J.clamp(+S.project.ui.leftWidth || 330, 230, 560);
+  const dockH = J.clamp(+S.project.ui.timelineDockHeight || 150, 96, 520);
+  if (work) work.style.setProperty('--left-col', Math.round(left) + 'px');
+  if (dock) dock.style.flexBasis = Math.round(dockH) + 'px';
+}
+function bindWorkspaceSplitters() {
+  const left = $('leftSplitter'), stage = $('stageSplitter');
+  if (left) {
+    left.addEventListener('pointerdown', e => {
+      if (window.innerWidth <= 1180) return;
+      e.preventDefault(); left.classList.add('dragging'); left.setPointerCapture(e.pointerId);
+      const move = ev => {
+        const work = document.querySelector('.work'), wr = work.getBoundingClientRect();
+        const w = J.clamp(ev.clientX - wr.left, 230, Math.min(560, wr.width - 520));
+        S.project.ui.leftWidth = Math.round(w);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = ev => {
+        left.removeEventListener('pointermove', move); left.removeEventListener('pointerup', up); left.removeEventListener('pointercancel', up);
+        try { if (left.hasPointerCapture(ev.pointerId)) left.releasePointerCapture(ev.pointerId); } catch (e) {}
+        left.classList.remove('dragging'); autosave();
+      };
+      left.addEventListener('pointermove', move); left.addEventListener('pointerup', up); left.addEventListener('pointercancel', up);
+    });
+    left.addEventListener('keydown', e => {
+      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.leftWidth = J.clamp((+S.project.ui.leftWidth || 330) + (e.key === 'ArrowRight' ? 16 : -16), 230, 560);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+  if (stage) {
+    document.addEventListener('mousedown', e => {
+      if (window.innerWidth <= 760 || e.button !== 0) return;
+      const sr = stage.getBoundingClientRect();
+      if (e.clientX < sr.left - 2 || e.clientX > sr.right + 2 || e.clientY < sr.top - 5 || e.clientY > sr.bottom + 5) return;
+      e.preventDefault();
+      stage.classList.add('dragging');
+      const dock = $('timelineDock');
+      const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
+      const move = ev => {
+        const h = J.clamp(startH + (startY - ev.clientY), 96, 520);
+        S.project.ui.timelineDockHeight = Math.round(h);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        stage.classList.remove('dragging'); autosave();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    stage.addEventListener('keydown', e => {
+      if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.timelineDockHeight = J.clamp((+S.project.ui.timelineDockHeight || 150) + (e.key === 'ArrowUp' ? 16 : -16), 96, 520);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+}
+
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
+  applyWorkspaceUi();
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   const lyricsEl = $('lyrics');
@@ -30547,6 +30883,7 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
+  bindWorkspaceSplitters();
   $('lyrics').addEventListener('input', e => {
     const next = e.target.value, prev = S.project.lyrics;
     remapLineIndexedState(prev, next);
@@ -30556,6 +30893,13 @@ function bind() {
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
+  $('imageFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { await addImageFile(f); }
+    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3200); }
+  });
   $('bpm').addEventListener('change', e => { S.project.timing.bpm = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
@@ -30596,6 +30940,7 @@ function bind() {
       e.preventDefault(); e.stopPropagation();
       drag = false;
       S.timelineActionHover = null;
+      revealLineInList(a.line);
       if (a.action === 'dice') rerollLine(a.line);
       else toggleLineLock(a.line);
       return;
@@ -30612,6 +30957,8 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
+    const clickedCut = timelineCutAtPointer(e);
+    if (clickedCut && clickedCut.line >= 0) revealLineInList(clickedCut.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
@@ -30822,6 +31169,7 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
+  await restoreProjectImages();
   syncUI();
   // Prefer the saved finished plan. Older projects without a snapshot are
   // generated once with the current planner, then immediately upgraded.
@@ -30851,7 +31199,7 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, addImageFile, restoreProjectImages, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, revealLineInList, applyWorkspaceUi };
 })();
 
 </script>

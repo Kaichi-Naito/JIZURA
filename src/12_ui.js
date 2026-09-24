@@ -12,7 +12,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
 };
 
-const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
+const S = { project: null, plan: null, activePlanKey: null, audio: null, audioSource: null, renderer: new J.Renderer(), playing: false, t: 0, t0: 0, loop: true, need: true, exporting: null, tap: null, slow: false, lineEls: [], curLine: -2, timelineZoom: 1, timelineStart: 0, timelineBoundaryHover: null, timelineBoundaryDrag: null, timelineActionHits: [], timelineCutHits: [], timelineActionHover: null, layoutPreview: null, layoutMenu: null, lineSortByTime: false };
 
 /* WebAudio player (works inside sandboxed pages where blob media may be blocked) */
 const AP = {
@@ -48,10 +48,11 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.images = (p && p.images) || {};
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -149,17 +150,18 @@ function editorRedo() {
    Browsers do not expose a reusable full local file path from <input type=file>.
    Store the source audio bytes in IndexedDB for automatic restore, and embed them
    in an explicitly saved .jizura.json so the project remains portable. */
-const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio';
+const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio', IMAGE_STORE = 'images';
 let audioDbJob = null;
 function openAudioDb() {
   if (!window.indexedDB) return Promise.resolve(null);
   if (audioDbJob) return audioDbJob;
   audioDbJob = new Promise((resolve, reject) => {
     let req;
-    try { req = indexedDB.open(AUDIO_DB_NAME, 1); } catch (e) { reject(e); return; }
+    try { req = indexedDB.open(AUDIO_DB_NAME, 2); } catch (e) { reject(e); return; }
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(IMAGE_STORE)) db.createObjectStore(IMAGE_STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
@@ -200,9 +202,48 @@ async function deleteStoredAudio(id) {
     });
   } catch (e) { console.warn('audio cleanup', e); }
 }
+
+async function putStoredImage(meta, file) {
+  const db = await openAudioDb(); if (!db) throw new Error('このブラウザでは画像の自動保存を利用できません');
+  const blob = file instanceof Blob ? file.slice(0, file.size, file.type || meta.type || '') : new Blob([file], { type: meta.type || '' });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, 'readwrite');
+    tx.objectStore(IMAGE_STORE).put({ id: meta.id, name: meta.name, type: meta.type || '', size: blob.size, lastModified: meta.lastModified || 0, width: meta.width || 0, height: meta.height || 0, blob });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('画像を保存できませんでした'));
+    tx.onabort = () => reject(tx.error || new Error('画像の保存が中断されました'));
+  });
+}
+async function getStoredImage(id) {
+  if (!id) return null;
+  try {
+    const db = await openAudioDb(); if (!db) return null;
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readonly'), req = tx.objectStore(IMAGE_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.warn('image restore', e); return null; }
+}
+async function deleteStoredImage(id) {
+  if (!id) return;
+  try {
+    const db = await openAudioDb(); if (!db) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readwrite');
+      tx.objectStore(IMAGE_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('image cleanup', e); }
+}
 function newAudioId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
   return 'audio-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+function newImageId() {
+  try { if (crypto && crypto.randomUUID) return 'img-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20); } catch (e) {}
+  return 'img-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 function audioMeta(file, id) {
   return { id, name: file.name || 'audio', type: file.type || '', size: file.size || 0, lastModified: file.lastModified || 0 };
@@ -280,6 +321,72 @@ async function restoreEmbeddedAudio(asset) {
     return false;
   }
 }
+
+async function attachProjectImage(file, opt = {}) {
+  const id = opt.id || newImageId();
+  const img = await J.setImageAsset(id, file);
+  const meta = {
+    id, name: file.name || (opt.name || 'image'),
+    type: file.type || opt.type || 'image/png',
+    size: file.size || 0, lastModified: file.lastModified || 0,
+    width: img && (img.width || img.naturalWidth) || opt.width || 0,
+    height: img && (img.height || img.naturalHeight) || opt.height || 0,
+  };
+  S.project.images = Object.assign({}, S.project.images || {}, { [id]: meta });
+  if (opt.persist !== false) await putStoredImage(meta, file);
+  return meta;
+}
+async function restoreProjectImages() {
+  const imgs = S.project && S.project.images || {};
+  let restored = 0;
+  for (const [id, meta] of Object.entries(imgs)) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    try { await J.setImageAsset(id, rec.blob); restored++; } catch (e) { console.warn('image restore asset', id, e); }
+  }
+  return restored;
+}
+async function restoreEmbeddedImages(items) {
+  let restored = 0;
+  for (const a of items || []) {
+    try {
+      const file = await embeddedToFile(a);
+      if (!file) continue;
+      const meta = await attachProjectImage(file, {
+        id: a.id, persist: true, name: a.name, type: a.type, width: a.width, height: a.height
+      });
+      if (meta) restored++;
+    } catch (e) { console.warn('embedded image restore', a && a.id, e); }
+  }
+  return restored;
+}
+function insertImageToken(id) {
+  const ta = $('lyrics'), prev = S.project.lyrics || '';
+  let pos = ta && Number.isFinite(ta.selectionStart) ? ta.selectionStart : prev.length;
+  pos = J.clamp(pos, 0, prev.length);
+  let lineEnd = prev.indexOf('\n', pos);
+  if (lineEnd < 0) lineEnd = prev.length;
+  const before = prev.slice(0, lineEnd);
+  const after = prev.slice(lineEnd);
+  const token = '[img:' + id + ']';
+  const sepA = before && !before.endsWith('\n') ? '\n' : '';
+  const sepB = after && !after.startsWith('\n') ? '\n' : '';
+  const next = before + sepA + token + sepB + after;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next;
+  ta.value = next;
+  const caret = (before + sepA + token).length;
+  try { ta.setSelectionRange(caret, caret); } catch (e) {}
+  replan();
+}
+async function addImageFile(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/i.test(file.type || '')) throw new Error('PNG / JPEG / WebP の画像を選んでください');
+  const meta = await attachProjectImage(file, { persist: true });
+  insertImageToken(meta.id);
+  flushSave();
+  toast('画像を追加しました');
+  return meta;
+}
 async function projectPayloadForSave() {
   // Text inputs replan on a short debounce. If Save is clicked inside that window,
   // force the pending plan update before freezing the project.
@@ -304,6 +411,17 @@ async function projectPayloadForSave() {
       dataUrl: await blobToDataUrl(file),
     };
   }
+  out._imageAssets = [];
+  for (const [id, meta] of Object.entries(out.images || {})) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    out._imageAssets.push({
+      id, name: meta.name || rec.name || 'image', type: meta.type || rec.type || rec.blob.type || 'image/png',
+      size: rec.blob.size, lastModified: meta.lastModified || rec.lastModified || 0,
+      width: meta.width || rec.width || 0, height: meta.height || rec.height || 0,
+      dataUrl: await blobToDataUrl(rec.blob),
+    });
+  }
   return out;
 }
 async function applyProjectData(raw) {
@@ -311,10 +429,13 @@ async function applyProjectData(raw) {
   S.audio = null; S.audioSource = null;
   const p = Object.assign({}, raw || {});
   const embedded = p._audioAsset || null;
-  delete p._audioAsset;
+  const embeddedImages = Array.isArray(p._imageAssets) ? p._imageAssets : [];
+  delete p._audioAsset; delete p._imageAssets;
   S.project = mergeProject(p);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
+  if (embeddedImages.length) await restoreEmbeddedImages(embeddedImages);
+  else await restoreProjectImages();
   syncUI();
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
@@ -395,7 +516,7 @@ function planInputKey(project) {
     extra: project.extra === true, wa: project.wa !== false, keyBg: project.keyBg || 'off',
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
-    overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
+    overrides: project.overrides || {}, images: project.images || {}, colors: project.colors || {}, fonts: project.fonts || {},
     userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
@@ -535,6 +656,7 @@ function showMsg(m) { const el = $('viewMsg'); if (!m) { el.hidden = true; retur
 
 /* ---------------- viewport & drawing ---------------- */
 function sizeViewport() {
+  if (!S.plan) return;
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
   let cssW = vp.clientWidth || 800, cssH = cssW / ar;
@@ -616,11 +738,13 @@ function followTimelinePlayhead() {
   return true;
 }
 function drawTimeline() {
+  if (!S.plan) return;
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d'), V = timelineView(), X = t => (t - V.start) / V.span * w;
   S.timelineActionHits = [];
+  S.timelineCutHits = [];
   x.fillStyle = '#131316'; x.fillRect(0, 0, w, h);
   if (S.audio && S.audio.peaks) {
     const pk = S.audio.peaks, n = pk.length, sd = S.audio.duration;
@@ -644,6 +768,7 @@ function drawTimeline() {
   for (const cut of S.plan.cuts) {
     if (cut.end <= V.start || cut.start >= V.end) continue;
     const x0 = X(Math.max(cut.start, V.start)), x1 = X(Math.min(cut.end, V.end));
+    S.timelineCutHits.push({ x: x0, y: top, w: Math.max(1, x1 - x0), h: bot - top, line: cut.line, cutIndex: cut.index, start: cut.start, end: cut.end });
     const hue = layoutHue(cut.layout);
     x.fillStyle = `hsla(${hue},70%,58%,0.28)`; x.fillRect(x0, top, Math.max(1, x1 - x0 - 1), bot - top);
     x.fillStyle = `hsla(${hue},80%,62%,0.95)`; x.fillRect(x0, top, Math.max(1, 2 * dpr), bot - top);
@@ -754,6 +879,26 @@ function timelineTimeAt(ev) {
   const r = $('timeline').getBoundingClientRect(), V = timelineView();
   const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
   return V.start + p * V.span;
+}
+function revealLineInList(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect(), margin = 8;
+  if (er.top < lr.top + margin) list.scrollTop -= (lr.top + margin) - er.top;
+  else if (er.bottom > lr.bottom - margin) list.scrollTop += er.bottom - (lr.bottom - margin);
+}
+function timelineCutAtPointer(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const px = (ev.clientX - r.left) / Math.max(1, r.width) * tl.width;
+  const py = (ev.clientY - r.top) / Math.max(1, r.height) * tl.height;
+  for (let i = S.timelineCutHits.length - 1; i >= 0; i--) {
+    const h = S.timelineCutHits[i];
+    if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) {
+      return S.plan.cuts[h.cutIndex] || null;
+    }
+  }
+  return null;
 }
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
@@ -898,14 +1043,16 @@ function renderLines() {
     const li = document.createElement('li'); li.className = 'ln'; li.dataset.lineIndex = String(i);
     const manual = S.project.timing.lineTimes && S.project.timing.lineTimes[i] != null;
     const manualEnd = S.project.timing.lineEnds && S.project.timing.lineEnds[i] != null;
-    const layoutName = o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動';
     const srcLine = editLines[i];
-    const editableText = srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text;
+    const isImage = !!(srcLine && srcLine.kind === 'image');
+    const imgMeta = isImage && S.project.images ? S.project.images[srcLine.imageId] : null;
+    const layoutName = isImage ? '画像' : (o.layout && J.LAYOUTS[o.layout] ? J.LAYOUTS[o.layout].name : '自動');
+    const editableText = isImage ? ('🖼 ' + ((imgMeta && imgMeta.name) || '画像')) : (srcLine && srcLine.sourceBody != null ? srcLine.sourceBody : ln.text);
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time start-time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <span class="time-arrow" aria-hidden="true">→</span>
       <input class="time end-time mono" type="number" step="0.01" min="0" value="${ln.end.toFixed(2)}" title="終了（秒）${manualEnd ? '・手動。空欄で自動に戻す' : '・自動（次の開始時刻に連結）。変更すると手動固定'}" aria-label="${i + 1}行目の終了秒" style="${manualEnd ? 'border-color:var(--amber)' : ''}">
-      <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
+      <input class="txt txt-edit${isImage ? ' image-line' : ''}" type="text" value="${escapeHtml(editableText)}" ${isImage ? 'readonly' : ''} title="${isImage ? '画像要素。元の歌詞欄では [img:…] として管理されます' : '歌詞を編集（Enterまたはフォーカスを外して確定）'}" aria-label="${i + 1}行目の${isImage ? '画像' : '歌詞'}">
       <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
       <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
       <div class="meta">
@@ -917,6 +1064,7 @@ function renderLines() {
       </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
+    if (isImage) li.querySelector('.layout-trigger').disabled = true;
     li.querySelector('.start-time').addEventListener('change', e => {
       const v = parseFloat(e.target.value);
       if (!S.project.timing.lineTimes) S.project.timing.lineTimes = {};
@@ -938,16 +1086,18 @@ function renderLines() {
     });
     const txtEdit = li.querySelector('.txt-edit');
     const originalText = editableText;
-    txtEdit.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
-    });
-    txtEdit.addEventListener('change', () => {
-      if (txtEdit.value === originalText) return;
-      replaceLyricLineFromList(i, txtEdit.value);
-    });
+    if (!isImage) {
+      txtEdit.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); txtEdit.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); txtEdit.value = originalText; txtEdit.blur(); }
+      });
+      txtEdit.addEventListener('change', () => {
+        if (txtEdit.value === originalText) return;
+        replaceLyricLineFromList(i, txtEdit.value);
+      });
+    }
     styleSel.addEventListener('change', e => { setOv(i, { style: e.target.value || undefined }); fontKey = ''; replan(); });
-    li.querySelector('.layout-trigger').addEventListener('click', e => { e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
+    li.querySelector('.layout-trigger').addEventListener('click', e => { if (isImage) return; e.stopPropagation(); openLayoutMenu(e.currentTarget, i, o.layout || ''); });
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
@@ -1376,8 +1526,76 @@ function tapNow() {
 function stopTap() { S.tap = null; $('tapPanel').hidden = true; $('btnTap').setAttribute('aria-pressed', 'false'); replan(); }
 function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textContent = ln ? `${S.tap.i + 1}. ${ln.text}` : '—'; }
 
+/* ---------------- workspace sizing ---------------- */
+function applyWorkspaceUi() {
+  if (!S.project) return;
+  S.project.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, S.project.ui || {});
+  const work = document.querySelector('.work'), dock = $('timelineDock');
+  const left = J.clamp(+S.project.ui.leftWidth || 330, 230, 560);
+  const dockH = J.clamp(+S.project.ui.timelineDockHeight || 150, 96, 520);
+  if (work) work.style.setProperty('--left-col', Math.round(left) + 'px');
+  if (dock) dock.style.flexBasis = Math.round(dockH) + 'px';
+}
+function bindWorkspaceSplitters() {
+  const left = $('leftSplitter'), stage = $('stageSplitter');
+  if (left) {
+    left.addEventListener('pointerdown', e => {
+      if (window.innerWidth <= 1180) return;
+      e.preventDefault(); left.classList.add('dragging'); left.setPointerCapture(e.pointerId);
+      const move = ev => {
+        const work = document.querySelector('.work'), wr = work.getBoundingClientRect();
+        const w = J.clamp(ev.clientX - wr.left, 230, Math.min(560, wr.width - 520));
+        S.project.ui.leftWidth = Math.round(w);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = ev => {
+        left.removeEventListener('pointermove', move); left.removeEventListener('pointerup', up); left.removeEventListener('pointercancel', up);
+        try { if (left.hasPointerCapture(ev.pointerId)) left.releasePointerCapture(ev.pointerId); } catch (e) {}
+        left.classList.remove('dragging'); autosave();
+      };
+      left.addEventListener('pointermove', move); left.addEventListener('pointerup', up); left.addEventListener('pointercancel', up);
+    });
+    left.addEventListener('keydown', e => {
+      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.leftWidth = J.clamp((+S.project.ui.leftWidth || 330) + (e.key === 'ArrowRight' ? 16 : -16), 230, 560);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+  if (stage) {
+    document.addEventListener('mousedown', e => {
+      if (window.innerWidth <= 760 || e.button !== 0) return;
+      const sr = stage.getBoundingClientRect();
+      if (e.clientX < sr.left - 2 || e.clientX > sr.right + 2 || e.clientY < sr.top - 5 || e.clientY > sr.bottom + 5) return;
+      e.preventDefault();
+      stage.classList.add('dragging');
+      const dock = $('timelineDock');
+      const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
+      const move = ev => {
+        const h = J.clamp(startH + (startY - ev.clientY), 96, 520);
+        S.project.ui.timelineDockHeight = Math.round(h);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        stage.classList.remove('dragging'); autosave();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    stage.addEventListener('keydown', e => {
+      if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.timelineDockHeight = J.clamp((+S.project.ui.timelineDockHeight || 150) + (e.key === 'ArrowUp' ? 16 : -16), 96, 520);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+}
+
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
+  applyWorkspaceUi();
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   const lyricsEl = $('lyrics');
@@ -1400,6 +1618,7 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
+  bindWorkspaceSplitters();
   $('lyrics').addEventListener('input', e => {
     const next = e.target.value, prev = S.project.lyrics;
     remapLineIndexedState(prev, next);
@@ -1409,6 +1628,13 @@ function bind() {
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
+  $('imageFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { await addImageFile(f); }
+    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3200); }
+  });
   $('bpm').addEventListener('change', e => { S.project.timing.bpm = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
@@ -1449,6 +1675,7 @@ function bind() {
       e.preventDefault(); e.stopPropagation();
       drag = false;
       S.timelineActionHover = null;
+      revealLineInList(a.line);
       if (a.action === 'dice') rerollLine(a.line);
       else toggleLineLock(a.line);
       return;
@@ -1465,6 +1692,8 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
+    const clickedCut = timelineCutAtPointer(e);
+    if (clickedCut && clickedCut.line >= 0) revealLineInList(clickedCut.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
@@ -1675,6 +1904,7 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
+  await restoreProjectImages();
   syncUI();
   // Prefer the saved finished plan. Older projects without a snapshot are
   // generated once with the current planner, then immediately upgraded.
@@ -1704,5 +1934,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, addImageFile, restoreProjectImages, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, revealLineInList, applyWorkspaceUi };
 })();
