@@ -141,7 +141,9 @@ jobs:
                     return {D,span,start:J.ui.timelineStart,targetTime:(target.start+Math.min(target.end,target.start+1))/2};
                   }""")
                   x=tl["x"] + (view["targetTime"]-view["start"])/view["span"]*tl["width"]
-                  y=tl["y"] + tl["height"]*.56
+                  # Click the upper part of the cut band so this tests the item body,
+                  # not the dice/lock buttons drawn near the bottom.
+                  y=tl["y"] + tl["height"]*.37
                   await page.mouse.click(x,y)
                   await page.wait_for_timeout(150)
                   jump=await page.evaluate("""() => {
