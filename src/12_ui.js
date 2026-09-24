@@ -738,6 +738,7 @@ function followTimelinePlayhead() {
   return true;
 }
 function drawTimeline() {
+  if (!S.plan) return;
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(10, Math.round(c.clientWidth * dpr)), h = Math.max(10, Math.round(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
