@@ -51,7 +51,8 @@ function mergeProject(p) {
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
+  o.assets = { images: Object.assign({}, (p && p.assets && p.assets.images) || {}) };
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: null, previewHeight: null }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -313,6 +314,7 @@ async function applyProjectData(raw) {
   const embedded = p._audioAsset || null;
   delete p._audioAsset;
   S.project = mergeProject(p);
+  if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
   syncUI();
@@ -325,8 +327,9 @@ async function applyProjectData(raw) {
 /* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
    Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
 function lineIndexMap(oldRaw, newRaw) {
-  const A = J.parseLyrics(oldRaw).lines.map(x => x.text);
-  const B = J.parseLyrics(newRaw).lines.map(x => x.text);
+  const keyOf = x => x.imageId ? '@img:' + x.imageId : x.text;
+  const A = J.parseLyrics(oldRaw).lines.map(keyOf);
+  const B = J.parseLyrics(newRaw).lines.map(keyOf);
   const m = A.length, n = B.length;
   const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
   for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
@@ -396,7 +399,9 @@ function planInputKey(project) {
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
     overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
-    userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
+    userFonts: project.userFonts || [],
+    imageAssets: Object.entries((project.assets && project.assets.images) || {}).map(([id, a]) => [id, a && a.dataUrl ? a.dataUrl.length : 0]),
+    audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
   let h = 2166136261;
@@ -534,12 +539,24 @@ function loadThumbFonts() {
 function showMsg(m) { const el = $('viewMsg'); if (!m) { el.hidden = true; return; } el.textContent = m; el.hidden = false; }
 
 /* ---------------- viewport & drawing ---------------- */
+function applyWorkspaceSizes() {
+  if (!S.project) return;
+  const work = document.querySelector('.work'), vp = $('viewport');
+  const ui = S.project.ui || (S.project.ui = {});
+  const maxLeft = Math.max(250, Math.min(560, window.innerWidth - 650));
+  const lw = Number.isFinite(+ui.leftWidth) ? J.clamp(+ui.leftWidth, 250, maxLeft) : 330;
+  work.style.setProperty('--left-width', Math.round(lw) + 'px');
+  if (Number.isFinite(+ui.previewHeight) && +ui.previewHeight >= 180) vp.style.height = Math.round(+ui.previewHeight) + 'px';
+  else vp.style.height = '';
+}
 function sizeViewport() {
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
-  let cssW = vp.clientWidth || 800, cssH = cssW / ar;
-  const maxH = Math.max(220, window.innerHeight * 0.68);
-  if (cssH > maxH) { cssH = maxH; cssW = cssH * ar; }
+  const customH = S.project && S.project.ui && Number.isFinite(+S.project.ui.previewHeight) && +S.project.ui.previewHeight >= 180;
+  let availW = vp.clientWidth || 800;
+  let availH = customH ? Math.max(180, vp.clientHeight) : Math.max(220, window.innerHeight * 0.68);
+  let cssW = availW, cssH = cssW / ar;
+  if (cssH > availH) { cssH = availH; cssW = cssH * ar; }
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const pw = Math.round(Math.min(S.plan.W, cssW * dpr)), ph = Math.round(pw / ar);
   if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
@@ -594,7 +611,7 @@ function seek(t) {
 }
 
 /* ---------------- timeline ---------------- */
-const layoutHue = k => (J.LAYOUT_ORDER.indexOf(k) * 37 + 30) % 360;
+const layoutHue = k => k === 'image' ? 190 : (J.LAYOUT_ORDER.indexOf(k) * 37 + 30) % 360;
 function timelineView() {
   const D = Math.max(0.001, S.plan.duration);
   const zoom = J.clamp(S.timelineZoom || 1, 1, 32);
@@ -651,7 +668,7 @@ function drawTimeline() {
     if (cutW > 34 * dpr) {
       x.fillStyle = 'rgba(236,231,225,0.85)'; x.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono') || 'monospace'}`;
       x.save(); x.beginPath(); x.rect(x0, top, x1 - x0 - 3, bot - top); x.clip();
-      x.fillText((J.LAYOUTS[cut.layout] || {}).name || cut.layout, x0 + 5 * dpr, top + 13 * dpr); x.restore();
+      x.fillText(cut.assetId ? '画像' : ((J.LAYOUTS[cut.layout] || {}).name || cut.layout), x0 + 5 * dpr, top + 13 * dpr); x.restore();
     }
     if (cut.line >= 0 && cutW >= 86 * dpr) {
       const size = 16 * dpr, gap = 3 * dpr, pad = 5 * dpr;
@@ -951,8 +968,10 @@ function renderLines() {
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
-    S.plan.cuts.filter(c => c.line === i && J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special).forEach(c => {
-      const sp = document.createElement('span'); sp.textContent = J.LAYOUTS[c.layout].name; sp.title = `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
+    S.plan.cuts.filter(c => c.line === i && (c.assetId || (J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special))).forEach(c => {
+      const sp = document.createElement('span');
+      sp.textContent = c.assetId ? '画像' : J.LAYOUTS[c.layout].name;
+      sp.title = c.assetId ? ((S.project.assets.images[c.assetId] || {}).name || '画像') : `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
       sp.style.borderColor = `hsla(${layoutHue(c.layout)},70%,58%,0.7)`;
       sp.addEventListener('click', () => seek(c.start + Math.min(c.dur * 0.5, c.inDur + 0.05)));
       cutsEl.appendChild(sp);
@@ -1330,6 +1349,7 @@ async function runExport(kind) {
   const onProgress = (p, m) => { boxes.forEach(b => { b.querySelector('.exp-bar').style.width = (p * 100).toFixed(1) + '%'; }); setText(m); };
   const t0 = performance.now();
   try {
+    if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
     await J.ensureFonts(S.project.lyrics + (S.project.title || '') + (S.project.artist || '') + HUD_CHARS, J.fontsOfPlan(S.plan));
     if (kind === 'mp4') {
       const r = await J.exportMP4({ plan: S.plan, project: S.project, audio: S.project.includeAudio !== false ? S.audio : null, quality: S.project.quality || 'high', onProgress, signal: ac.signal });
@@ -1379,6 +1399,7 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
+  applyWorkspaceSizes();
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   const lyricsEl = $('lyrics');
   lyricsEl.value = S.project.lyrics;
@@ -1676,6 +1697,7 @@ async function boot() {
   S.project = loadLocal();
   bind();
   syncUI();
+  if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
   // Prefer the saved finished plan. Older projects without a snapshot are
   // generated once with the current planner, then immediately upgraded.
   const frozen = restorePlanSnapshot();
