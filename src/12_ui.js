@@ -876,6 +876,20 @@ function timelineTimeAt(ev) {
   const p = J.clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1);
   return V.start + p * V.span;
 }
+function revealLineInList(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect(), margin = 8;
+  if (er.top < lr.top + margin) list.scrollTop -= (lr.top + margin) - er.top;
+  else if (er.bottom > lr.bottom - margin) list.scrollTop += er.bottom - (lr.bottom - margin);
+}
+function timelineCutAtPointer(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const top = r.top + r.height * 0.30, bottom = r.bottom - 8;
+  if (ev.clientY < top || ev.clientY > bottom) return null;
+  return J.cutAt(S.plan, timelineTimeAt(ev));
+}
 function timelineSeek(ev) {
   seek(timelineTimeAt(ev));
 }
@@ -1502,8 +1516,73 @@ function tapNow() {
 function stopTap() { S.tap = null; $('tapPanel').hidden = true; $('btnTap').setAttribute('aria-pressed', 'false'); replan(); }
 function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textContent = ln ? `${S.tap.i + 1}. ${ln.text}` : '—'; }
 
+/* ---------------- workspace sizing ---------------- */
+function applyWorkspaceUi() {
+  if (!S.project) return;
+  S.project.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, S.project.ui || {});
+  const work = document.querySelector('.work'), dock = $('timelineDock');
+  const left = J.clamp(+S.project.ui.leftWidth || 330, 230, 560);
+  const dockH = J.clamp(+S.project.ui.timelineDockHeight || 150, 96, 520);
+  if (work) work.style.setProperty('--left-col', Math.round(left) + 'px');
+  if (dock) dock.style.flexBasis = Math.round(dockH) + 'px';
+}
+function bindWorkspaceSplitters() {
+  const left = $('leftSplitter'), stage = $('stageSplitter');
+  if (left) {
+    left.addEventListener('pointerdown', e => {
+      if (window.innerWidth <= 1180) return;
+      e.preventDefault(); left.classList.add('dragging'); left.setPointerCapture(e.pointerId);
+      const move = ev => {
+        const work = document.querySelector('.work'), wr = work.getBoundingClientRect();
+        const w = J.clamp(ev.clientX - wr.left, 230, Math.min(560, wr.width - 520));
+        S.project.ui.leftWidth = Math.round(w);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = ev => {
+        left.removeEventListener('pointermove', move); left.removeEventListener('pointerup', up); left.removeEventListener('pointercancel', up);
+        try { if (left.hasPointerCapture(ev.pointerId)) left.releasePointerCapture(ev.pointerId); } catch (e) {}
+        left.classList.remove('dragging'); autosave();
+      };
+      left.addEventListener('pointermove', move); left.addEventListener('pointerup', up); left.addEventListener('pointercancel', up);
+    });
+    left.addEventListener('keydown', e => {
+      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.leftWidth = J.clamp((+S.project.ui.leftWidth || 330) + (e.key === 'ArrowRight' ? 16 : -16), 230, 560);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+  if (stage) {
+    stage.addEventListener('pointerdown', e => {
+      if (window.innerWidth <= 760) return;
+      e.preventDefault(); stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId);
+      const host = stage.parentElement;
+      const move = ev => {
+        const hr = host.getBoundingClientRect();
+        const maxH = Math.max(96, hr.height - 150);
+        const h = J.clamp(hr.bottom - ev.clientY - 14, 96, Math.min(520, maxH));
+        S.project.ui.timelineDockHeight = Math.round(h);
+        applyWorkspaceUi(); sizeViewport(); drawTimeline();
+      };
+      const up = ev => {
+        stage.removeEventListener('pointermove', move); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up);
+        try { if (stage.hasPointerCapture(ev.pointerId)) stage.releasePointerCapture(ev.pointerId); } catch (e) {}
+        stage.classList.remove('dragging'); autosave();
+      };
+      stage.addEventListener('pointermove', move); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+    });
+    stage.addEventListener('keydown', e => {
+      if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      S.project.ui.timelineDockHeight = J.clamp((+S.project.ui.timelineDockHeight || 150) + (e.key === 'ArrowUp' ? 16 : -16), 96, 520);
+      applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
+    });
+  }
+}
+
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
+  applyWorkspaceUi();
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   const lyricsEl = $('lyrics');
@@ -1526,6 +1605,7 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
+  bindWorkspaceSplitters();
   $('lyrics').addEventListener('input', e => {
     const next = e.target.value, prev = S.project.lyrics;
     remapLineIndexedState(prev, next);
@@ -1535,6 +1615,13 @@ function bind() {
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
+  $('imageFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { await addImageFile(f); }
+    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3200); }
+  });
   $('bpm').addEventListener('change', e => { S.project.timing.bpm = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
@@ -1591,6 +1678,8 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
+    const clickedCut = timelineCutAtPointer(e);
+    if (clickedCut && clickedCut.line >= 0) revealLineInList(clickedCut.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
@@ -1801,6 +1890,7 @@ async function loadAudioFile(f) {
 async function boot() {
   S.project = loadLocal();
   bind();
+  await restoreProjectImages();
   syncUI();
   // Prefer the saved finished plan. Older projects without a snapshot are
   // generated once with the current planner, then immediately upgraded.
@@ -1830,5 +1920,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, addImageFile, restoreProjectImages, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, revealLineInList, applyWorkspaceUi };
 })();
