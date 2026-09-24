@@ -904,7 +904,10 @@ function timelineCutAtPointer(ev) {
   return S.plan.cuts.find(c => c.index === h.cutIndex) || null;
 }
 function timelineSeek(ev) {
-  seek(timelineTimeAt(ev));
+  const t = timelineTimeAt(ev);
+  const cut = J.cutAt(S.plan, t);
+  if (cut && cut.line >= 0) revealLineInList(cut.line);
+  seek(t);
 }
 function updateBoundaryDrag(ev) {
   const d = S.timelineBoundaryDrag;
