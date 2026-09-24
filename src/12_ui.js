@@ -565,7 +565,9 @@ function tick(now) {
       if (S.loop && !S.tap) { seek(0); t = 0; }
       else { pause(); t = S.plan.duration - 1e-3; if (S.tap) stopTap(); }
     }
-    S.t = t; S.need = true;
+    S.t = t;
+    followTimelinePlayhead();
+    S.need = true;
   }
   if (S.need) { S.need = false; draw(); }
 }
@@ -601,6 +603,16 @@ function timelineView() {
   S.timelineZoom = zoom;
   S.timelineStart = start;
   return { D, zoom, span, start, end: start + span };
+}
+function followTimelinePlayhead() {
+  const V = timelineView();
+  if (V.zoom <= 1.001 || S.timelineBoundaryDrag) return false;
+  let next = null;
+  if (S.t > V.end) next = S.t - V.span * 0.18;
+  else if (S.t < V.start) next = S.t - V.span * 0.18;
+  if (next == null) return false;
+  S.timelineStart = J.clamp(next, 0, Math.max(0, V.D - V.span));
+  return true;
 }
 function drawTimeline() {
   const c = $('timeline'), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -754,16 +766,6 @@ function timelineWheel(ev) {
 
 /* ---------------- cut info ---------------- */
 let lastCutIdx = -2;
-function revealLineInList(lineIndex) {
-  if (!(lineIndex >= 0)) return;
-  const list = $('lineList'), el = S.lineEls[lineIndex];
-  if (!list || !el) return;
-  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
-  const margin = 8;
-  const top = lr.top + margin, bottom = lr.bottom - margin;
-  if (er.top < top) list.scrollTop -= top - er.top;
-  else if (er.bottom > bottom) list.scrollTop += er.bottom - bottom;
-}
 function updateCutInfo() {
   const cut = J.cutAt(S.plan, S.t);
   const idx = cut ? cut.index : -1;
@@ -771,7 +773,6 @@ function updateCutInfo() {
   if (li !== S.curLine) {
     S.lineEls.forEach((el, i) => el.classList.toggle('cur', i === li));
     S.curLine = li;
-    revealLineInList(li);
   }
   if (idx === lastCutIdx) return;
   lastCutIdx = idx;
@@ -834,13 +835,15 @@ function renderLines() {
     li.innerHTML = `<span class="no">${String(i + 1).padStart(2, '0')}</span>
       <input class="time mono" type="number" step="0.01" min="0" value="${ln.start.toFixed(2)}" title="開始（秒）${manual ? '・手動' : '・自動'}" aria-label="${i + 1}行目の開始秒" style="${manual ? 'border-color:var(--cyan)' : ''}">
       <input class="txt txt-edit" type="text" value="${escapeHtml(editableText)}" title="歌詞を編集（Enterまたはフォーカスを外して確定）" aria-label="${i + 1}行目の歌詞">
-      <div class="meta"><span class="cuts"></span>
-      <span class="tools">
-        <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
-        <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
-        <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
-        <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
-      </span></div>`;
+      <button class="icon ghost dice" title="この行を再抽選">${ICON.dice}</button>
+      <button class="icon ghost lock" title="この行の構成をロック" aria-pressed="${o.lock ? 'true' : 'false'}">${ICON.lock}</button>
+      <div class="meta">
+        <span class="cuts"></span>
+        <span class="tools">
+          <select class="line-style" aria-label="この行のスタイル">${styleOpts}</select>
+          <span class="layout-pick"><button type="button" class="layout-trigger ghost" title="レイアウト指定。候補にマウスを置くと一時プレビュー">${escapeHtml(layoutName)}</button></span>
+        </span>
+      </div>`;
     const styleSel = li.querySelector('.line-style');
     styleSel.value = o.style || '';
     li.querySelector('.time').addEventListener('change', e => {
@@ -1597,5 +1600,5 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
 })();
