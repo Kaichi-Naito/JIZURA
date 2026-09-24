@@ -84,20 +84,22 @@ jobs:
                       raise RuntimeError(f"line follow scrolled the page: {win_before}->{state['windowY']}")
 
                   # Time-sorted mode must also follow the correct original line index.
+                  # Keep timings realistic; swap only two adjacent rows so display order genuinely differs.
                   await page.evaluate("""() => {
                     const t={};
-                    for(let i=0;i<30;i++) t[i]=(29-i)*2;
+                    for(let i=0;i<30;i++) t[i]=i*2;
+                    t[23]=48; t[24]=46;
                     J.ui.project.timing.lineTimes=t;
                     J.ui.project.ui.lineSortByTime=true;
                     J.uiApi.replan();
                   }""")
                   await page.wait_for_timeout(200)
                   await page.locator("#lineList").evaluate("el=>el.scrollTop=0")
-                  await page.evaluate("J.uiApi.seek(50.01)")
+                  await page.evaluate("J.uiApi.seek(46.01)")
                   await page.wait_for_timeout(150)
                   sorted_state=await page.evaluate("""() => {
                     const list=document.querySelector('#lineList');
-                    const el=J.ui.lineEls[4];
+                    const el=J.ui.lineEls[24];
                     const lr=list.getBoundingClientRect(), er=el.getBoundingClientRect();
                     return {
                       scrollTop:list.scrollTop,
