@@ -7,6 +7,36 @@
 'use strict';
 const E = J.E;
 
+J.IMAGE_ASSETS = J.IMAGE_ASSETS || new Map();
+J.setImageAsset = async (id, source) => {
+  if (!id || !source) return null;
+  let blob = source;
+  if (typeof source === 'string') {
+    const res = await fetch(source); blob = await res.blob();
+  }
+  let img = null;
+  if (typeof createImageBitmap === 'function' && blob instanceof Blob) {
+    try { img = await createImageBitmap(blob); } catch (e) {}
+  }
+  if (!img) {
+    const url = blob instanceof Blob ? URL.createObjectURL(blob) : String(source);
+    img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => { if (blob instanceof Blob) URL.revokeObjectURL(url); resolve(el); };
+      el.onerror = () => { if (blob instanceof Blob) URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+      el.src = url;
+    });
+  }
+  J.IMAGE_ASSETS.set(id, img);
+  return img;
+};
+J.getImageAsset = id => J.IMAGE_ASSETS.get(id) || null;
+J.removeImageAsset = id => {
+  const img = J.IMAGE_ASSETS.get(id);
+  try { if (img && typeof img.close === 'function') img.close(); } catch (e) {}
+  J.IMAGE_ASSETS.delete(id);
+};
+
 /* ---------- main-item pipeline: enter / hold / exit + draw ---------- */
 J.mainDraw = (env, it) => {
   const cut = env.cut;
@@ -610,6 +640,37 @@ J.LAYOUTS = {
         });
       }
       return bb;
+    },
+  },
+
+  /* ------------------------------------------------ special: project image */
+  image: {
+    name: '画像', special: true, fits: () => false,
+    plan: () => ({ maxW: 0.82, maxH: 0.78 }),
+    render(env) {
+      if (env.pass !== 'main') return null;
+      const img = J.getImageAsset && J.getImageAsset(env.cut.imageId);
+      const { W, H, ctx, sc } = env, P = env.cut.params || {};
+      const pIn = E.outCubic(env.pIn), pOut = E.inCubic(env.pOut);
+      const a = J.clamp(pIn * (1 - pOut));
+      if (!img) {
+        const w = W * 0.42, h = H * 0.28;
+        ctx.save(); ctx.globalAlpha = Math.max(0.35, a);
+        ctx.strokeStyle = sc.sub; ctx.lineWidth = Math.max(1, H * 0.002);
+        ctx.strokeRect(W / 2 - w / 2, H / 2 - h / 2, w, h);
+        ctx.restore();
+        return { x0: W / 2 - w / 2, x1: W / 2 + w / 2, y0: H / 2 - h / 2, y1: H / 2 + h / 2, cx: W / 2, cy: H / 2, boxes: [] };
+      }
+      const iw = img.width || img.naturalWidth || 1, ih = img.height || img.naturalHeight || 1;
+      const fit = Math.min(W * (P.maxW || 0.82) / iw, H * (P.maxH || 0.78) / ih);
+      const pulse = 0.94 + 0.06 * E.outBack(env.pIn, 1.2) - 0.025 * pOut;
+      const w = iw * fit * pulse, h = ih * fit * pulse;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(W / 2, H / 2);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+      return { x0: W / 2 - w / 2, x1: W / 2 + w / 2, y0: H / 2 - h / 2, y1: H / 2 + h / 2, cx: W / 2, cy: H / 2, boxes: [] };
     },
   },
 
