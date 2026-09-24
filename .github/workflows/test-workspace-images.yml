@@ -5,6 +5,9 @@ on:
     branches:
       - resizable-workspace-timeline-jump-images
     paths:
+      - "src/**"
+      - "app/**"
+      - "build.py"
       - ".github/workflows/test-workspace-images.yml"
 
 permissions:
