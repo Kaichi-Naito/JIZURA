@@ -83,14 +83,23 @@ h2 { font-size: 11px; letter-spacing: 0.18em; color: var(--muted); }
 h3 { font-size: 11px; letter-spacing: 0.14em; color: var(--muted); margin-top: 18px; margin-bottom: 8px; }
 
 /* ---------- workspace ---------- */
-.work { flex: 1; display: grid; grid-template-columns: minmax(270px, 330px) minmax(0, 1fr) minmax(290px, 350px); min-height: 0; }
+.work { --left-width: 330px; flex: 1; display: grid; grid-template-columns: minmax(250px, var(--left-width)) 6px minmax(0, 1fr) minmax(290px, 350px); min-height: 0; }
 .col { min-width: 0; min-height: 0; }
 .col-left, .col-right { background: var(--panel); overflow: auto; }
 .col-left { border-right: 1px solid var(--line); }
 .col-right { border-left: 1px solid var(--line); }
+.splitter { position: relative; z-index: 20; user-select: none; touch-action: none; }
+.splitter::after { content: ""; position: absolute; background: transparent; transition: background .12s; }
+.splitter:hover::after, .splitter.dragging::after { background: var(--cyan); }
+.splitter-v { cursor: col-resize; width: 6px; margin-left: -3px; margin-right: -3px; }
+.splitter-v::after { top: 0; bottom: 0; left: 2px; width: 2px; }
+.splitter-h { cursor: row-resize; height: 6px; margin-top: -4px; margin-bottom: -2px; }
+.splitter-h::after { left: 0; right: 0; top: 2px; height: 2px; }
 .sec { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .line-list-head-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lyric-head-actions { gap: 5px; flex-wrap: nowrap; }
+.small-file { padding: 3px 8px !important; font-size: 11px; }
 #lyrics { min-height: 150px; font-size: 14px; resize: vertical; }
 .syntax { font-size: 12px; color: var(--muted); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; }
 .syntax code { font-family: var(--mono); color: var(--amber); }
@@ -156,9 +165,9 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 .ln .cuts span:hover { color: var(--text); border-color: var(--amber); }
 
 /* ---------- stage ---------- */
-.col-stage { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; min-width: 0; }
-.viewport { position: relative; width: 100%; background: #000; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
-.viewport canvas { display: block; width: 100%; height: auto; max-height: 68vh; object-fit: contain; }
+.col-stage { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; min-width: 0; }
+.viewport { position: relative; width: 100%; min-height: 180px; background: #000; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
+.viewport canvas { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 .field-wide { grid-column: span 2; }
 .key-badge { position: absolute; right: 10px; top: 10px; background: rgba(12,12,14,0.78); border: 1px solid var(--line2); color: #fff; padding: 3px 8px; border-radius: var(--r); font-size: 11px; pointer-events: none; letter-spacing: .04em; }
 .key-badge i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.5); }
@@ -351,7 +360,13 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
     <!-- ================= left: lyrics & timing ================= -->
     <section class="col col-left" aria-label="歌詞とタイミング">
       <div class="sec">
-        <div class="sec-h"><h2>歌詞</h2><button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button></div>
+        <div class="sec-h">
+          <h2>歌詞</h2>
+          <div class="row lyric-head-actions">
+            <label class="file small-file" title="画像を歌詞アイテムとして追加">画像を追加<input id="imageFile" type="file" accept="image/*" multiple></label>
+            <button id="btnSyntax" class="ghost small" aria-expanded="false">記法</button>
+          </div>
+        </div>
         <textarea id="lyrics" rows="9" spellcheck="false" aria-label="歌詞（1行 = 1フレーズ）"></textarea>
         <div id="syntax" class="syntax" hidden>
           <ul>
@@ -361,6 +376,7 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
             <li>行末の <code>!</code> … フラッシュと揺れを入れる</li>
             <li><code>歌詞|ruby or note</code> … 注釈レイアウトの小さな文字</li>
             <li><code>[01:23.45]歌詞</code> … LRC のタイムスタンプをそのまま使用</li>
+            <li><code>[img:xxxx]</code> … 追加した画像を1つのアイテムとして表示</li>
             <li><code>#</code> で始まる行 … コメント（無視）</li>
           </ul>
         </div>
@@ -408,9 +424,12 @@ dialog.terms a { color: var(--cyan); word-break: break-all; }
       </div>
     </section>
 
+    <div id="leftResizeHandle" class="splitter splitter-v" role="separator" aria-orientation="vertical" title="ドラッグして左カラムの横幅を変更"></div>
+
     <!-- ================= center: stage ================= -->
     <section class="col col-stage" aria-label="プレビュー">
       <div class="viewport" id="viewport"><canvas id="view" width="1280" height="720"></canvas><div id="viewMsg" class="overlay-msg" hidden></div><div id="keyBadge" class="key-badge" hidden></div><div id="toast" class="toast" role="status" aria-live="polite" hidden></div></div>
+      <div id="stageResizeHandle" class="splitter splitter-h" role="separator" aria-orientation="horizontal" title="ドラッグしてプレビューの縦幅を変更"></div>
       <div class="transport">
         <button id="btnPlay" class="play" aria-label="再生">▶</button>
         <span id="timeNow" class="tc">00:00.00</span><span class="tc muted">/</span><span id="timeDur" class="tc muted">00:00.00</span>
@@ -3000,7 +3019,8 @@ J.defaultProject = () => ({
   overrides: {},
   colors: { enabled: false },
   fonts: {},
-  ui: { lineSortByTime: false, lyricsHeight: null },
+  assets: { images: {} },
+  ui: { lineSortByTime: false, lyricsHeight: null, leftWidth: null, previewHeight: null },
 });
 
 /* the original (After Effects-implemented) sets, captured before any expression pack registers */
@@ -3026,6 +3046,15 @@ J.parseLyrics = (raw) => {
     while ((m = s.match(/^\[(\d+):(\d+(?:[.:]\d+)?)\]/))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); s = s.slice(m[0].length); }
     s = s.trim();
     const sourceBody = s;
+    const imageMatch = s.match(/^\[img:([A-Za-z0-9_-]+)\]$/i);
+    if (imageMatch) {
+      const imageId = imageMatch[1];
+      const base = { text: '[画像]', note: null, impact: false, emph: [], manual: null, gapBefore: pendingGap, sourceIndex, sourceBody, imageId };
+      pendingGap = false;
+      if (times.length) times.forEach(t => lines.push(Object.assign({}, base, { lrc: t })));
+      else lines.push(Object.assign({}, base, { lrc: null }));
+      return;
+    }
     let note = null;
     const bar = s.indexOf('|');
     if (bar >= 0) { note = s.slice(bar + 1).trim() || null; s = s.slice(0, bar).trim(); }
@@ -3200,7 +3229,22 @@ J.plan = (project, audio) => {
     const n = [...ln.text.replace(/\s+/g, '')].length;
     const visEnd = manualEnd ? e : Math.min(e, s + Math.max(3.6, n * 0.5 + 1.2));
     const D = Math.max(0.05, visEnd - s);
-    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey });
+    plan.lines.push({ index: li, text: ln.text, start: s, end: e, visEnd, manualEnd, note: ln.note, impact: ln.impact, emph: ln.emph, chunks: null, seed: lineSeed, styleKey: lineStyleKey, imageId: ln.imageId || null });
+    if (ln.imageId) {
+      plan.lines[li].chunks = ['[画像]'];
+      const dur = Math.max(0.05, visEnd - s);
+      plan.cuts.push(makeCut({
+        text: '[画像]', lineText: '[画像]', note: null, line: li, lineCut: 0,
+        start: s, end: visEnd, manualEnd, layout: 'image', assetId: ln.imageId,
+        enter: 'blur', exit: 'blur', hold: 'still',
+        inDur: Math.min(0.35, dur * 0.28), outDur: Math.min(0.3, dur * 0.24),
+        params: { imageScale: 0.72 }, decor: [], scheme: 0, styleKey: lineStyleKey,
+        seed: J.h(lineSeed, 0, 17), emph: false, recap: false, words: [],
+        stagger: 0, treat: 'none', treatP: {}, bg: 'none', bgP: {}, cam: 'push', camP: {},
+        trans: null, transP: {}, transDur: 0
+      }));
+      return;
+    }
     const chunks = ln.manual || J.chunkText(ln.text);
     plan.lines[li].chunks = chunks;
     const L = J.lerp(1.3, 0.5, fx.density);
@@ -3658,6 +3702,23 @@ const E = J.E;
 
 const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w | 0); c.height = Math.max(1, h | 0); return c; };
 
+J.imageAssetCache = J.imageAssetCache || new Map();
+J.ensureProjectImages = async project => {
+  const imgs = project && project.assets && project.assets.images ? project.assets.images : {};
+  const jobs = Object.entries(imgs).map(async ([id, a]) => {
+    if (!a || !a.dataUrl) return;
+    const cached = J.imageAssetCache.get(id);
+    if (cached && cached.src === a.dataUrl && cached.complete) return;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = a.dataUrl;
+    try { if (img.decode) await img.decode(); else await new Promise((res, rej) => { img.onload = res; img.onerror = rej; }); }
+    catch (e) { console.warn('image asset', id, e); return; }
+    J.imageAssetCache.set(id, img);
+  });
+  await Promise.all(jobs);
+};
+
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
@@ -3983,7 +4044,28 @@ class Renderer {
   }
 
   drawCut(env) {
-    const cut = env.cut, L = J.LAYOUTS[cut.layout] || J.LAYOUTS.center;
+    const cut = env.cut;
+    if (cut && cut.assetId) {
+      if (env.pass !== 'main') return null;
+      const img = J.imageAssetCache && J.imageAssetCache.get(cut.assetId);
+      if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+      const pIn = J.E ? J.E.outCubic(env.pIn) : env.pIn;
+      const pOut = J.E ? J.E.inCubic(env.pOut) : env.pOut;
+      const a = J.clamp(pIn * (1 - pOut));
+      if (a <= 0.001) return null;
+      const maxW = env.W * (cut.params && cut.params.imageScale || 0.72);
+      const maxH = env.H * (cut.params && cut.params.imageScale || 0.72);
+      const fit = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+      const s = fit * J.lerp(0.94, 1, pIn) * J.lerp(1, 0.97, pOut);
+      const w = img.naturalWidth * s, h = img.naturalHeight * s;
+      const x = (env.W - w) / 2, y = (env.H - h) / 2;
+      env.ctx.save();
+      env.ctx.globalAlpha = a;
+      env.ctx.drawImage(img, x, y, w, h);
+      env.ctx.restore();
+      return { x, y, w, h };
+    }
+    const L = J.LAYOUTS[cut.layout] || J.LAYOUTS.center;
     const decor = cut.decor || [];
     for (const d of decor) { const D = J.DECOR[d.id]; if (D && D.layer === 'back') try { D.draw(env, null, d); } catch (e) { console.warn(e); } }
     let bb = null;
@@ -29198,7 +29280,8 @@ function mergeProject(p) {
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
+  o.assets = { images: Object.assign({}, (p && p.assets && p.assets.images) || {}) };
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: null, previewHeight: null }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -29460,6 +29543,7 @@ async function applyProjectData(raw) {
   const embedded = p._audioAsset || null;
   delete p._audioAsset;
   S.project = mergeProject(p);
+  if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
   syncUI();
@@ -29472,8 +29556,9 @@ async function applyProjectData(raw) {
 /* Keep per-line timing / overrides attached to the same lyric when lines are inserted, split, merged or removed.
    Exact matches use an LCS; one-for-one edited gaps keep their state by position. */
 function lineIndexMap(oldRaw, newRaw) {
-  const A = J.parseLyrics(oldRaw).lines.map(x => x.text);
-  const B = J.parseLyrics(newRaw).lines.map(x => x.text);
+  const keyOf = x => x.imageId ? '@img:' + x.imageId : x.text;
+  const A = J.parseLyrics(oldRaw).lines.map(keyOf);
+  const B = J.parseLyrics(newRaw).lines.map(keyOf);
   const m = A.length, n = B.length;
   const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
   for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
@@ -29543,7 +29628,9 @@ function planInputKey(project) {
     seed: project.seed | 0, aspect: project.aspect || '16:9', fps: project.fps || 24,
     fx: project.fx || {}, enabled: project.enabled || {}, timing: project.timing || {},
     overrides: project.overrides || {}, colors: project.colors || {}, fonts: project.fonts || {},
-    userFonts: project.userFonts || [], audioId: project.audio && project.audio.id ? project.audio.id : null,
+    userFonts: project.userFonts || [],
+    imageAssets: Object.entries((project.assets && project.assets.images) || {}).map(([id, a]) => [id, a && a.dataUrl ? a.dataUrl.length : 0]),
+    audioId: project.audio && project.audio.id ? project.audio.id : null,
   };
   const s = JSON.stringify(src);
   let h = 2166136261;
@@ -29681,12 +29768,24 @@ function loadThumbFonts() {
 function showMsg(m) { const el = $('viewMsg'); if (!m) { el.hidden = true; return; } el.textContent = m; el.hidden = false; }
 
 /* ---------------- viewport & drawing ---------------- */
+function applyWorkspaceSizes() {
+  if (!S.project) return;
+  const work = document.querySelector('.work'), vp = $('viewport');
+  const ui = S.project.ui || (S.project.ui = {});
+  const maxLeft = Math.max(250, Math.min(560, window.innerWidth - 650));
+  const lw = Number.isFinite(+ui.leftWidth) ? J.clamp(+ui.leftWidth, 250, maxLeft) : 330;
+  work.style.setProperty('--left-width', Math.round(lw) + 'px');
+  if (Number.isFinite(+ui.previewHeight) && +ui.previewHeight >= 180) vp.style.height = Math.round(+ui.previewHeight) + 'px';
+  else vp.style.height = '';
+}
 function sizeViewport() {
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
-  let cssW = vp.clientWidth || 800, cssH = cssW / ar;
-  const maxH = Math.max(220, window.innerHeight * 0.68);
-  if (cssH > maxH) { cssH = maxH; cssW = cssH * ar; }
+  const customH = S.project && S.project.ui && Number.isFinite(+S.project.ui.previewHeight) && +S.project.ui.previewHeight >= 180;
+  let availW = vp.clientWidth || 800;
+  let availH = customH ? Math.max(180, vp.clientHeight) : Math.max(220, window.innerHeight * 0.68);
+  let cssW = availW, cssH = cssW / ar;
+  if (cssH > availH) { cssH = availH; cssW = cssH * ar; }
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const pw = Math.round(Math.min(S.plan.W, cssW * dpr)), ph = Math.round(pw / ar);
   if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
@@ -29741,7 +29840,7 @@ function seek(t) {
 }
 
 /* ---------------- timeline ---------------- */
-const layoutHue = k => (J.LAYOUT_ORDER.indexOf(k) * 37 + 30) % 360;
+const layoutHue = k => k === 'image' ? 190 : (J.LAYOUT_ORDER.indexOf(k) * 37 + 30) % 360;
 function timelineView() {
   const D = Math.max(0.001, S.plan.duration);
   const zoom = J.clamp(S.timelineZoom || 1, 1, 32);
@@ -29798,7 +29897,7 @@ function drawTimeline() {
     if (cutW > 34 * dpr) {
       x.fillStyle = 'rgba(236,231,225,0.85)'; x.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono') || 'monospace'}`;
       x.save(); x.beginPath(); x.rect(x0, top, x1 - x0 - 3, bot - top); x.clip();
-      x.fillText((J.LAYOUTS[cut.layout] || {}).name || cut.layout, x0 + 5 * dpr, top + 13 * dpr); x.restore();
+      x.fillText(cut.assetId ? '画像' : ((J.LAYOUTS[cut.layout] || {}).name || cut.layout), x0 + 5 * dpr, top + 13 * dpr); x.restore();
     }
     if (cut.line >= 0 && cutW >= 86 * dpr) {
       const size = 16 * dpr, gap = 3 * dpr, pad = 5 * dpr;
@@ -29866,6 +29965,20 @@ function timelineActionAt(ev) {
     if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return h;
   }
   return null;
+}
+function timelineItemAt(ev) {
+  const tl = $('timeline'), r = tl.getBoundingClientRect();
+  const y = (ev.clientY - r.top) / Math.max(1, r.height);
+  if (y < 0.30 || y > 0.92) return null;
+  return J.cutAt(S.plan, timelineTimeAt(ev));
+}
+function scrollLineListTo(lineIndex) {
+  if (!(lineIndex >= 0)) return;
+  const list = $('lineList'), el = S.lineEls[lineIndex];
+  if (!list || !el) return;
+  const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const target = list.scrollTop + (er.top - lr.top) - Math.max(0, (lr.height - er.height) * 0.35);
+  list.scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, target));
 }
 function timelineEditableBoundaries() {
   ensureLineCutOrdinals(S.plan);
@@ -29977,6 +30090,66 @@ function updateCutInfo() {
     cut.cam && cut.cam !== 'push' ? chip('c', 'カメラ', n(J.CAMERA, cut.cam)) : '',
     cut.trans ? chip('c', 'つなぎ', n(J.TRANS, cut.trans)) : '',
   ].join('');
+}
+
+/* ---------------- image lyric assets ---------------- */
+function newImageAssetId() {
+  try { if (crypto && crypto.randomUUID) return 'img_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16); } catch (e) {}
+  return 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+}
+async function normalizeImageFile(file) {
+  let source = null;
+  try { source = await createImageBitmap(file); }
+  catch (e) {
+    const url = URL.createObjectURL(file);
+    try {
+      source = await new Promise((resolve, reject) => {
+        const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const sw = source.width || source.naturalWidth, sh = source.height || source.naturalHeight;
+  if (!(sw > 0 && sh > 0)) throw new Error('画像サイズを取得できませんでした');
+  const maxSide = 1920, k = Math.min(1, maxSide / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(source, 0, 0, w, h);
+  if (source.close) try { source.close(); } catch (e) {}
+  const blob = await new Promise((resolve, reject) => cv.toBlob(b => b ? resolve(b) : reject(new Error('画像を変換できませんでした')), 'image/webp', 0.9));
+  return { name: file.name || 'image', type: 'image/webp', width: w, height: h, dataUrl: await blobToDataUrl(blob) };
+}
+function insertLyricAssetTokens(tokens) {
+  const el = $('lyrics'), prev = S.project.lyrics || '';
+  const a = Math.max(0, el.selectionStart == null ? prev.length : el.selectionStart);
+  const b = Math.max(a, el.selectionEnd == null ? a : el.selectionEnd);
+  const before = prev.slice(0, a), after = prev.slice(b);
+  const block = tokens.join('\n');
+  const pre = before && !before.endsWith('\n') ? '\n' : '';
+  const post = after && !after.startsWith('\n') ? '\n' : '';
+  const next = before + pre + block + post + after;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next; el.value = next;
+  const caret = (before + pre + block).length;
+  el.focus(); el.setSelectionRange(caret, caret);
+}
+async function importImageFiles(files) {
+  const list = [...(files || [])].filter(f => f && /^image\//.test(f.type || ''));
+  if (!list.length) return [];
+  S.project.assets = S.project.assets || { images: {} };
+  S.project.assets.images = S.project.assets.images || {};
+  const tokens = [], ids = [];
+  showMsg('画像を読み込み中…');
+  try {
+    for (const f of list) {
+      const id = newImageAssetId(), asset = await normalizeImageFile(f);
+      S.project.assets.images[id] = asset;
+      ids.push(id); tokens.push('[img:' + id + ']');
+    }
+    insertLyricAssetTokens(tokens);
+    if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
+    fontKey = ''; replan();
+    return ids;
+  } finally { showMsg(null); }
 }
 
 /* ---------------- line list ---------------- */
@@ -30098,8 +30271,10 @@ function renderLines() {
     li.querySelector('.dice').addEventListener('click', () => rerollLine(i));
     li.querySelector('.lock').addEventListener('click', () => toggleLineLock(i));
     const cutsEl = li.querySelector('.cuts');
-    S.plan.cuts.filter(c => c.line === i && J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special).forEach(c => {
-      const sp = document.createElement('span'); sp.textContent = J.LAYOUTS[c.layout].name; sp.title = `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
+    S.plan.cuts.filter(c => c.line === i && (c.assetId || (J.LAYOUTS[c.layout] && !J.LAYOUTS[c.layout].special))).forEach(c => {
+      const sp = document.createElement('span');
+      sp.textContent = c.assetId ? '画像' : J.LAYOUTS[c.layout].name;
+      sp.title = c.assetId ? ((S.project.assets.images[c.assetId] || {}).name || '画像') : `${c.text}｜${J.ENTER[c.enter].name} → ${J.EXIT[c.exit].name}`;
       sp.style.borderColor = `hsla(${layoutHue(c.layout)},70%,58%,0.7)`;
       sp.addEventListener('click', () => seek(c.start + Math.min(c.dur * 0.5, c.inDur + 0.05)));
       cutsEl.appendChild(sp);
@@ -30477,6 +30652,7 @@ async function runExport(kind) {
   const onProgress = (p, m) => { boxes.forEach(b => { b.querySelector('.exp-bar').style.width = (p * 100).toFixed(1) + '%'; }); setText(m); };
   const t0 = performance.now();
   try {
+    if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
     await J.ensureFonts(S.project.lyrics + (S.project.title || '') + (S.project.artist || '') + HUD_CHARS, J.fontsOfPlan(S.plan));
     if (kind === 'mp4') {
       const r = await J.exportMP4({ plan: S.plan, project: S.project, audio: S.project.includeAudio !== false ? S.audio : null, quality: S.project.quality || 'high', onProgress, signal: ac.signal });
@@ -30526,6 +30702,7 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
   S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
+  applyWorkspaceSizes();
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   const lyricsEl = $('lyrics');
   lyricsEl.value = S.project.lyrics;
@@ -30547,6 +30724,12 @@ function syncUI() {
 
 /* ---------------- wiring ---------------- */
 function bind() {
+  $('imageFile').addEventListener('change', async e => {
+    const files = e.target.files;
+    try { await importImageFiles(files); }
+    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3000); }
+    e.target.value = '';
+  });
   $('lyrics').addEventListener('input', e => {
     const next = e.target.value, prev = S.project.lyrics;
     remapLineIndexedState(prev, next);
@@ -30612,6 +30795,8 @@ function bind() {
       updateBoundaryDrag(e);
       return;
     }
+    const item = timelineItemAt(e);
+    if (item && item.line >= 0) scrollLineListTo(item.line);
     drag = true;
     S.timelineBoundaryHover = null;
     tl.style.cursor = 'pointer';
@@ -30785,10 +30970,44 @@ function bind() {
     else if (e.code === 'ArrowLeft') seek(S.t - (e.shiftKey ? 1 : 1 / S.plan.fps));
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
+  const bindSplitter = (id, axis) => {
+    const h = $(id); if (!h) return;
+    let d = null;
+    h.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      const ui = S.project.ui || (S.project.ui = {});
+      d = {
+        id: e.pointerId, x: e.clientX, y: e.clientY,
+        left: document.querySelector('.col-left').getBoundingClientRect().width,
+        height: $('viewport').getBoundingClientRect().height
+      };
+      h.classList.add('dragging'); h.setPointerCapture(e.pointerId);
+    });
+    h.addEventListener('pointermove', e => {
+      if (!d || e.pointerId !== d.id) return;
+      const ui = S.project.ui || (S.project.ui = {});
+      if (axis === 'x') {
+        const maxLeft = Math.max(250, Math.min(560, window.innerWidth - 650));
+        ui.leftWidth = Math.round(J.clamp(d.left + e.clientX - d.x, 250, maxLeft));
+      } else {
+        const stageH = document.querySelector('.col-stage').clientHeight || window.innerHeight;
+        ui.previewHeight = Math.round(J.clamp(d.height + e.clientY - d.y, 180, Math.max(180, stageH - 170)));
+      }
+      applyWorkspaceSizes(); sizeViewport(); drawTimeline();
+    });
+    const done = e => {
+      if (!d) return;
+      try { if (h.hasPointerCapture(d.id)) h.releasePointerCapture(d.id); } catch (err) {}
+      d = null; h.classList.remove('dragging'); autosave();
+    };
+    h.addEventListener('pointerup', done); h.addEventListener('pointercancel', done);
+  };
+  bindSplitter('leftResizeHandle', 'x');
+  bindSplitter('stageResizeHandle', 'y');
   $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
-  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
+  window.addEventListener('resize', () => { closeLayoutMenu(); applyWorkspaceSizes(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) {
-    new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
+    new ResizeObserver(() => { if (!S.plan) return; sizeViewport(); drawTimeline(); }).observe($('viewport'));
     let lyricsResizeReady = false;
     requestAnimationFrame(() => { lyricsResizeReady = true; });
     new ResizeObserver(() => {
@@ -30823,10 +31042,15 @@ async function boot() {
   S.project = loadLocal();
   bind();
   syncUI();
-  // Prefer the saved finished plan. Older projects without a snapshot are
-  // generated once with the current planner, then immediately upgraded.
+  // Establish the visual plan before waiting for image decoding so resize
+  // observers can never see a null plan during async startup.
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
+  if (J.ensureProjectImages) {
+    await J.ensureProjectImages(S.project);
+    S.need = true;
+  }
+  // Older projects without a snapshot were already generated above.
   if (S.project.audio && S.project.audio.id) {
     $('audioName').textContent = `${S.project.audio.name || '保存済みの曲'}（復元中…）`;
     await restoreProjectAudio();
@@ -30851,7 +31075,7 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { boot(); }); else boot();
 J.ui = S;
 // hooks for hosts that embed the app (the After Effects CEP panel)
-J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead };
+J.uiApi = { toast, replan, syncUI, pause, seek, flushSave, loadAudioFile, restartPreview, restoreProjectAudio, projectPayloadForSave, applyProjectData, storePlanSnapshot, restorePlanSnapshot, planInputKey, editorUndo, editorRedo, resetEditorHistory, followTimelinePlayhead, importImageFiles, scrollLineListTo, applyWorkspaceSizes };
 })();
 
 </script>
