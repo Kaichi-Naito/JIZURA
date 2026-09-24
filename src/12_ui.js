@@ -241,6 +241,10 @@ function newAudioId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
   return 'audio-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 }
+function newImageId() {
+  try { if (crypto && crypto.randomUUID) return 'img-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20); } catch (e) {}
+  return 'img-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
 function audioMeta(file, id) {
   return { id, name: file.name || 'audio', type: file.type || '', size: file.size || 0, lastModified: file.lastModified || 0 };
 }
@@ -317,6 +321,72 @@ async function restoreEmbeddedAudio(asset) {
     return false;
   }
 }
+
+async function attachProjectImage(file, opt = {}) {
+  const id = opt.id || newImageId();
+  const img = await J.setImageAsset(id, file);
+  const meta = {
+    id, name: file.name || (opt.name || 'image'),
+    type: file.type || opt.type || 'image/png',
+    size: file.size || 0, lastModified: file.lastModified || 0,
+    width: img && (img.width || img.naturalWidth) || opt.width || 0,
+    height: img && (img.height || img.naturalHeight) || opt.height || 0,
+  };
+  S.project.images = Object.assign({}, S.project.images || {}, { [id]: meta });
+  if (opt.persist !== false) await putStoredImage(meta, file);
+  return meta;
+}
+async function restoreProjectImages() {
+  const imgs = S.project && S.project.images || {};
+  let restored = 0;
+  for (const [id, meta] of Object.entries(imgs)) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    try { await J.setImageAsset(id, rec.blob); restored++; } catch (e) { console.warn('image restore asset', id, e); }
+  }
+  return restored;
+}
+async function restoreEmbeddedImages(items) {
+  let restored = 0;
+  for (const a of items || []) {
+    try {
+      const file = await embeddedToFile(a);
+      if (!file) continue;
+      const meta = await attachProjectImage(file, {
+        id: a.id, persist: true, name: a.name, type: a.type, width: a.width, height: a.height
+      });
+      if (meta) restored++;
+    } catch (e) { console.warn('embedded image restore', a && a.id, e); }
+  }
+  return restored;
+}
+function insertImageToken(id) {
+  const ta = $('lyrics'), prev = S.project.lyrics || '';
+  let pos = ta && Number.isFinite(ta.selectionStart) ? ta.selectionStart : prev.length;
+  pos = J.clamp(pos, 0, prev.length);
+  let lineEnd = prev.indexOf('\n', pos);
+  if (lineEnd < 0) lineEnd = prev.length;
+  const before = prev.slice(0, lineEnd);
+  const after = prev.slice(lineEnd);
+  const token = '[img:' + id + ']';
+  const sepA = before && !before.endsWith('\n') ? '\n' : '';
+  const sepB = after && !after.startsWith('\n') ? '\n' : '';
+  const next = before + sepA + token + sepB + after;
+  remapLineIndexedState(prev, next);
+  S.project.lyrics = next;
+  ta.value = next;
+  const caret = (before + sepA + token).length;
+  try { ta.setSelectionRange(caret, caret); } catch (e) {}
+  replan();
+}
+async function addImageFile(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/i.test(file.type || '')) throw new Error('PNG / JPEG / WebP の画像を選んでください');
+  const meta = await attachProjectImage(file, { persist: true });
+  insertImageToken(meta.id);
+  flushSave();
+  toast('画像を追加しました');
+  return meta;
+}
 async function projectPayloadForSave() {
   // Text inputs replan on a short debounce. If Save is clicked inside that window,
   // force the pending plan update before freezing the project.
@@ -341,6 +411,17 @@ async function projectPayloadForSave() {
       dataUrl: await blobToDataUrl(file),
     };
   }
+  out._imageAssets = [];
+  for (const [id, meta] of Object.entries(out.images || {})) {
+    const rec = await getStoredImage(id);
+    if (!rec || !rec.blob) continue;
+    out._imageAssets.push({
+      id, name: meta.name || rec.name || 'image', type: meta.type || rec.type || rec.blob.type || 'image/png',
+      size: rec.blob.size, lastModified: meta.lastModified || rec.lastModified || 0,
+      width: meta.width || rec.width || 0, height: meta.height || rec.height || 0,
+      dataUrl: await blobToDataUrl(rec.blob),
+    });
+  }
   return out;
 }
 async function applyProjectData(raw) {
@@ -348,10 +429,13 @@ async function applyProjectData(raw) {
   S.audio = null; S.audioSource = null;
   const p = Object.assign({}, raw || {});
   const embedded = p._audioAsset || null;
-  delete p._audioAsset;
+  const embeddedImages = Array.isArray(p._imageAssets) ? p._imageAssets : [];
+  delete p._audioAsset; delete p._imageAssets;
   S.project = mergeProject(p);
   if (embedded) await restoreEmbeddedAudio(embedded);
   else await restoreProjectAudio();
+  if (embeddedImages.length) await restoreEmbeddedImages(embeddedImages);
+  else await restoreProjectImages();
   syncUI();
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
