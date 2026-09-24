@@ -115,10 +115,10 @@ jobs:
                   # 4) Timeline item click explicitly scrolls line list to clicked line.
                   # Make many lines after the image so the target can be offscreen.
                   await page.evaluate("""() => {
-                    const token=J.ui.project.lyrics.split('\n').find(x=>x.startsWith('[img:'));
+                    const token=J.ui.project.lyrics.split(String.fromCharCode(10)).find(x=>x.startsWith('[img:'));
                     const more=Array.from({length:28},(_,i)=>'TEXT '+String(i+1).padStart(2,'0'));
                     const prev=J.ui.project.lyrics;
-                    const next=[token,...more].join('\n');
+                    const next=[token,...more].join(String.fromCharCode(10));
                     J.ui.project.lyrics=next;
                     document.querySelector('#lyrics').value=next;
                     J.ui.project.timing.lineTimes=Object.fromEntries(Array.from({length:29},(_,i)=>[i,i*2]));
