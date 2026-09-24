@@ -94,31 +94,47 @@ button.tap { font: 700 18px/1 var(--mono); letter-spacing: 0.2em; padding: 16px;
 
 /* line list */
 #lineList {
-  list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 6px;
+  list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 2px;
   max-height: clamp(220px, 42vh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-.ln { display: grid; grid-template-columns: 22px 66px minmax(0, 1fr); gap: 4px 6px; align-items: center; padding: 6px; border: 1px solid transparent; border-radius: var(--r); }
+.ln {
+  display: grid;
+  grid-template-columns: 18px 58px minmax(0, 1fr) 26px 26px;
+  gap: 3px 4px;
+  align-items: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+}
 .ln:hover { background: var(--raised); }
 .ln.cur { border-color: var(--line2); background: var(--raised); }
-.ln .no { font: 500 11px var(--mono); color: var(--faint); text-align: right; }
-.ln .time { width: 100%; padding: 3px 5px; font-size: 12px; }
-.ln .txt { width: 100%; min-width: 0; padding: 3px 5px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
+.ln .no { font: 500 10px var(--mono); color: var(--faint); text-align: right; }
+.ln .time { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 11px; }
+.ln .txt { width: 100%; min-width: 0; height: 26px; padding: 2px 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; cursor: text; }
 .ln .txt:hover { border-color: var(--line2); }
 .ln .txt:focus { background: var(--ink); border-color: var(--amber); }
-.ln .meta { grid-column: 2 / 4; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
-.ln .tools { display: flex; gap: 4px; flex: none; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; max-width: 100%; }
-.ln .tools select, .ln .layout-trigger { padding: 2px 4px; font-size: 11px; max-width: 92px; min-width: 0; }
-.ln .line-style { width: 92px; }
-.ln .layout-trigger { width: 92px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.ln > button.icon { width: 26px; height: 26px; padding: 3px 4px; }
+.ln .meta {
+  grid-column: 2 / 6;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.ln .tools { display: flex; gap: 3px; flex: none; align-items: center; flex-wrap: nowrap; justify-content: flex-end; margin: 0; }
+.ln .tools select, .ln .layout-trigger { height: 25px; padding: 2px 4px; font-size: 10px; min-width: 0; }
+.ln .line-style { width: 88px; }
+.ln .layout-trigger { width: 72px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .layout-menu { position: fixed; z-index: 100; width: 230px; max-height: min(360px, 55vh); overflow-y: auto; padding: 5px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel); box-shadow: 0 10px 36px rgba(0,0,0,.55); overscroll-behavior: contain; }
 .layout-menu button { display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 2px; background: transparent; text-align: left; font-size: 12px; color: var(--text); }
 .layout-menu button:hover, .layout-menu button.previewing { background: var(--raised2); color: var(--cyan); }
 .layout-menu button.selected { color: var(--amber); }
-.ln .cuts { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
-.ln .cuts span { font-size: 10px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; }
+.ln .cuts { display: flex; gap: 3px; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+.ln .cuts span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; padding: 1px 4px; border-radius: 2px; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; }
 .ln .cuts span:hover { color: var(--text); border-color: var(--amber); }
 
 /* ---------- stage ---------- */
