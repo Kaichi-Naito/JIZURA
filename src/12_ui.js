@@ -1778,7 +1778,7 @@ function bind() {
   $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
   window.addEventListener('resize', () => { closeLayoutMenu(); applyWorkspaceSizes(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) {
-    new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
+    new ResizeObserver(() => { if (!S.plan) return; sizeViewport(); drawTimeline(); }).observe($('viewport'));
     let lyricsResizeReady = false;
     requestAnimationFrame(() => { lyricsResizeReady = true; });
     new ResizeObserver(() => {
@@ -1813,11 +1813,15 @@ async function boot() {
   S.project = loadLocal();
   bind();
   syncUI();
-  if (J.ensureProjectImages) await J.ensureProjectImages(S.project);
-  // Prefer the saved finished plan. Older projects without a snapshot are
-  // generated once with the current planner, then immediately upgraded.
+  // Establish the visual plan before waiting for image decoding so resize
+  // observers can never see a null plan during async startup.
   const frozen = restorePlanSnapshot();
   if (!frozen) replan();
+  if (J.ensureProjectImages) {
+    await J.ensureProjectImages(S.project);
+    S.need = true;
+  }
+  // Older projects without a snapshot were already generated above.
   if (S.project.audio && S.project.audio.id) {
     $('audioName').textContent = `${S.project.audio.name || '保存済みの曲'}（復元中…）`;
     await restoreProjectAudio();
