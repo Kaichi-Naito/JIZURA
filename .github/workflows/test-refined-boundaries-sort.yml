@@ -1,0 +1,166 @@
+name: Test refined timeline boundaries and saved sort
+
+on:
+  push:
+    branches:
+      - refine-timeline-boundaries-save-sort
+    paths:
+      - ".github/workflows/test-refined-boundaries-sort.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build app
+        run: python3 build.py
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run regression tests
+        shell: bash
+        run: |
+          python3 -m http.server 8765 >/tmp/jizura-http.log 2>&1 &
+          python3 - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width":1440,"height":900})
+                  errors=[]
+                  page.on("pageerror", lambda e: errors.append(str(e)))
+                  await page.goto("http://127.0.0.1:8765/")
+                  await page.wait_for_selector("#timeline")
+
+                  # Create title + normal cuts + a long-gap interlude.
+                  await page.fill("#songTitle", "TITLE")
+                  await page.fill("#lyrics", "FIRST LINE\nSECOND LINE\nTHIRD LINE")
+                  await page.wait_for_timeout(450)
+                  await page.evaluate("""() => {
+                    J.ui.project.timing.lineTimes = {0:2,1:10,2:14};
+                    J.ui.project.timing.snap = false;
+                    J.ui.project.fx.density = .3;
+                    J.ui.project.timing.cutBoundaries = {};
+                    J.uiApi.replan();
+                  }""")
+                  await page.wait_for_timeout(300)
+
+                  # Verify special-item boundaries are discoverable.
+                  special = await page.evaluate("""() => {
+                    const cuts=J.ui.plan.cuts.slice().sort((a,b)=>a.start-b.start);
+                    const out=[];
+                    for(let i=1;i<cuts.length;i++){
+                      const l=cuts[i-1], r=cuts[i];
+                      if(Math.abs(l.end-r.start)>.07) continue;
+                      const key=J.cutBoundaryKey(l,r);
+                      if(key) out.push({key,left:l.layout,right:r.layout,time:r.start,leftStart:l.start,rightEnd:r.end});
+                    }
+                    return out;
+                  }""")
+                  if not any(x["left"]=="title" or x["right"]=="title" for x in special):
+                      raise RuntimeError(f"title boundary missing: {special}")
+                  if not any(x["left"]=="interlude" or x["right"]=="interlude" for x in special):
+                      raise RuntimeError(f"interlude boundary missing: {special}")
+
+                  # Choose an interlude-related boundary to exercise newly supported special items.
+                  target = next(x for x in special if x["left"]=="interlude" or x["right"]=="interlude")
+                  tl=await page.locator("#timeline").bounding_box()
+                  dur=await page.evaluate("J.ui.plan.duration")
+                  x0=tl["x"] + target["time"]/dur*tl["width"]
+                  y_band=tl["y"] + tl["height"]*.58
+                  await page.mouse.move(x0,y_band)
+                  cursor=await page.locator("#timeline").evaluate("el=>el.style.cursor")
+                  if cursor!="col-resize":
+                      raise RuntimeError(f"special boundary did not become draggable: {target}, cursor={cursor}")
+
+                  old=target["time"]
+                  desired=min(target["rightEnd"]-.25, old+.3)
+                  x1=tl["x"] + desired/dur*tl["width"]
+                  await page.mouse.down()
+                  await page.mouse.move(x1,y_band,steps=6)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(150)
+                  moved=await page.evaluate("key => J.ui.project.timing.cutBoundaries[key]", target["key"])
+                  if moved is None or abs(float(moved)-old)<.08:
+                      raise RuntimeError(f"special boundary did not move/save: old={old}, saved={moved}, target={target}")
+
+                  # Same X in upper item-number area must NOT expose boundary dragging.
+                  # First undo the move so the exact old boundary is easy to target.
+                  await page.keyboard.press("Control+Z")
+                  await page.wait_for_timeout(250)
+                  current=await page.evaluate("""key => {
+                    const cuts=J.ui.plan.cuts.slice().sort((a,b)=>a.start-b.start);
+                    for(let i=1;i<cuts.length;i++){
+                      const l=cuts[i-1],r=cuts[i];
+                      if(J.cutBoundaryKey(l,r)===key) return r.start;
+                    }
+                    return null;
+                  }""", target["key"])
+                  if current is None:
+                      raise RuntimeError("target boundary disappeared after undo")
+                  x_top=tl["x"] + current/dur*tl["width"]
+                  y_top=tl["y"] + tl["height"]*.12
+                  before_map=await page.evaluate("() => JSON.stringify(J.ui.project.timing.cutBoundaries||{})")
+                  await page.mouse.move(x_top,y_top)
+                  cursor_top=await page.locator("#timeline").evaluate("el=>el.style.cursor")
+                  if cursor_top=="col-resize":
+                      raise RuntimeError("upper number/seek area still exposes boundary drag cursor")
+                  seek_before=await page.evaluate("J.ui.t")
+                  await page.mouse.down()
+                  await page.mouse.move(x_top+70,y_top,steps=5)
+                  await page.mouse.up()
+                  await page.wait_for_timeout(100)
+                  after_map=await page.evaluate("() => JSON.stringify(J.ui.project.timing.cutBoundaries||{})")
+                  seek_after=await page.evaluate("J.ui.t")
+                  if before_map != after_map:
+                      raise RuntimeError(f"upper seek-area drag modified boundaries: {before_map} -> {after_map}")
+                  if abs(float(seek_after)-float(seek_before)) < .05:
+                      raise RuntimeError(f"upper seek-area drag did not seek: {seek_before} -> {seek_after}")
+
+                  # Persist time-sort UI preference across a full reload.
+                  pressed0=await page.get_attribute("#btnSortLines","aria-pressed")
+                  if pressed0=="true":
+                      await page.click("#btnSortLines")
+                  await page.click("#btnSortLines")
+                  await page.wait_for_timeout(850)
+                  if await page.get_attribute("#btnSortLines","aria-pressed")!="true":
+                      raise RuntimeError("time sort did not turn on")
+                  pref=await page.evaluate("J.ui.project.ui && J.ui.project.ui.lineSortByTime")
+                  if pref is not True:
+                      raise RuntimeError(f"time sort preference not stored in project: {pref}")
+                  await page.reload()
+                  await page.wait_for_selector("#btnSortLines")
+                  await page.wait_for_function("() => !!J.ui && !!J.ui.plan")
+                  pressed1=await page.get_attribute("#btnSortLines","aria-pressed")
+                  pref1=await page.evaluate("J.ui.project.ui && J.ui.project.ui.lineSortByTime")
+                  if pressed1!="true" or pref1 is not True:
+                      raise RuntimeError(f"time sort did not survive reload: pressed={pressed1}, pref={pref1}")
+
+                  if errors:
+                      raise RuntimeError("page errors: "+" | ".join(errors))
+                  print({"ok":True,"specialBoundaries":special,"movedSpecial":moved,"topSeek":[seek_before,seek_after],"sortPersisted":pref1})
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+      - name: Commit generated index
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "index.html already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Rebuild web app"
+          git push
