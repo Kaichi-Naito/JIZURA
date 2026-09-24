@@ -1560,9 +1560,7 @@ function bindWorkspaceSplitters() {
       const host = stage.parentElement, dock = $('timelineDock');
       const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
       const move = ev => {
-        const hr = host.getBoundingClientRect();
-        const maxH = Math.max(96, hr.height - 150);
-        const h = J.clamp(startH + (startY - ev.clientY), 96, Math.min(520, maxH));
+        const h = J.clamp(startH + (startY - ev.clientY), 96, 520);
         S.project.ui.timelineDockHeight = Math.round(h);
         applyWorkspaceUi(); sizeViewport(); drawTimeline();
       };
