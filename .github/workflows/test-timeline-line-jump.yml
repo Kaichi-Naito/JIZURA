@@ -67,6 +67,11 @@ jobs:
                   cs=await page.locator("#timeline").evaluate("el=>({w:el.width,h:el.height})")
                   x=tl["x"]+(hit["x"]+hit["w"]*.5)/cs["w"]*tl["width"]
                   y=tl["y"]+(hit["y"]+hit["h"]*.45)/cs["h"]*tl["height"]
+                  target_el=await page.evaluate("""p => {
+                    const el=document.elementFromPoint(p.x,p.y);
+                    return el && {id:el.id,tag:el.tagName,cls:el.className};
+                  }""", {"x":x,"y":y})
+                  print({"clickTarget":target_el,"x":x,"y":y,"timelineBox":tl,"canvasSize":cs,"hit":hit})
                   await page.mouse.click(x,y)
                   await page.wait_for_timeout(140)
                   nav=await page.evaluate("""() => {
