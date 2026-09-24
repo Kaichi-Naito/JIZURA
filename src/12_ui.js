@@ -550,7 +550,9 @@ function sizeViewport() {
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
   let cssW = vp.clientWidth || 800, cssH = cssW / ar;
-  const maxH = Math.max(220, window.innerHeight * 0.68);
+  const saved = S.project && S.project.ui ? +S.project.ui.previewHeight : NaN;
+  const custom = Number.isFinite(saved) && saved >= 180;
+  const maxH = custom ? Math.max(180, vp.clientHeight || saved) : Math.max(220, window.innerHeight * 0.68);
   if (cssH > maxH) { cssH = maxH; cssW = cssH * ar; }
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const pw = Math.round(Math.min(S.plan.W, cssW * dpr)), ph = Math.round(pw / ar);
@@ -1036,6 +1038,28 @@ function queueLayoutPreview(i, layoutKey) {
   clearTimeout(layoutPreviewTimer);
   layoutPreviewTimer = setTimeout(() => previewLineLayout(i, layoutKey), 35);
 }
+function previewLineStyle(i, styleKey) {
+  const p = JSON.parse(JSON.stringify(S.project));
+  p.overrides = p.overrides || {};
+  const cur = Object.assign({}, p.overrides[i] || {});
+  if (styleKey) cur.style = styleKey; else delete cur.style;
+  if (Object.keys(cur).length) p.overrides[i] = cur; else delete p.overrides[i];
+  const plan = J.plan(p, audioLike());
+  const cut = plan.cuts.find(c => c.line === i && c.layout !== 'interlude');
+  const line = plan.lines[i];
+  const t = cut ? cut.start + Math.min(cut.dur * 0.55, Math.max(cut.inDur + 0.06, cut.dur * 0.28)) : (line ? line.start + 0.01 : S.t);
+  S.layoutPreview = { plan, t };
+  S.need = true;
+  // Hovering a style can introduce a font that is not currently loaded.
+  if (J.ensureFonts) {
+    J.ensureFonts(p.lyrics + (p.title || '') + (p.artist || '') + HUD_CHARS, J.fontsOfPlan(plan))
+      .then(() => { S.need = true; }).catch(() => {});
+  }
+}
+function queueLineStylePreview(i, styleKey) {
+  clearTimeout(layoutPreviewTimer);
+  layoutPreviewTimer = setTimeout(() => previewLineStyle(i, styleKey), 35);
+}
 function closeLayoutMenu() {
   const m = S.layoutMenu;
   if (m) {
@@ -1074,6 +1098,51 @@ function openLayoutMenu(trigger, lineIndex, currentLayout) {
     const d = J.LAYOUTS[k];
     if (d && !d.special) add(k, d.name);
   }
+  menu.addEventListener('mouseleave', clearLayoutPreview);
+  document.body.appendChild(menu);
+  const r = trigger.getBoundingClientRect();
+  let left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - menu.offsetWidth - 8));
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) closeLayoutMenu(); };
+  document.addEventListener('pointerdown', outside, true);
+  S.layoutMenu = { el: menu, outside };
+}
+function openLineStyleMenu(trigger, lineIndex, currentStyle) {
+  closeLayoutMenu();
+  const menu = document.createElement('div');
+  menu.className = 'style-menu';
+  menu.setAttribute('role', 'menu');
+
+  const add = (key, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.k = key;
+    if ((currentStyle || '') === key) b.classList.add('selected');
+    b.addEventListener('mouseenter', () => {
+      menu.querySelectorAll('.previewing').forEach(x => x.classList.remove('previewing'));
+      b.classList.add('previewing');
+      queueLineStylePreview(lineIndex, key);
+    });
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      setOv(lineIndex, { style: key || undefined });
+      fontKey = '';
+      closeLayoutMenu();
+      replan();
+      const ln = S.plan.lines[lineIndex];
+      if (ln) seek(ln.start + 0.001);
+    });
+    menu.appendChild(b);
+  };
+
+  const globalName = (J.STYLES[S.project.style] || J.STYLES.noir).name;
+  add('', '全体（' + globalName + '）');
+  for (const k of J.STYLE_ORDER) {
+    const d = J.STYLES[k];
+    if (d) add(k, d.name);
+  }
+
   menu.addEventListener('mouseleave', clearLayoutPreview);
   document.body.appendChild(menu);
   const r = trigger.getBoundingClientRect();
@@ -1426,12 +1495,24 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 /* ---------------- workspace sizing ---------------- */
 function applyWorkspaceUi() {
   if (!S.project) return;
-  S.project.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, S.project.ui || {});
-  const work = document.querySelector('.work'), dock = $('timelineDock');
+  S.project.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, previewHeight: null }, S.project.ui || {});
+  delete S.project.ui.timelineDockHeight;
+  const work = document.querySelector('.work'), vp = $('viewport');
   const left = J.clamp(+S.project.ui.leftWidth || 330, 230, 560);
-  const dockH = J.clamp(+S.project.ui.timelineDockHeight || 150, 96, 520);
   if (work) work.style.setProperty('--left-col', Math.round(left) + 'px');
-  if (dock) dock.style.flexBasis = Math.round(dockH) + 'px';
+
+  const ph = +S.project.ui.previewHeight;
+  const custom = Number.isFinite(ph) && ph >= 180;
+  if (vp) {
+    if (custom) {
+      const maxH = Math.max(180, window.innerHeight - 210);
+      vp.style.height = Math.round(J.clamp(ph, 180, maxH)) + 'px';
+      vp.classList.add('user-sized');
+    } else {
+      vp.style.height = '';
+      vp.classList.remove('user-sized');
+    }
+  }
 }
 function bindWorkspaceSplitters() {
   const left = $('leftSplitter'), stage = $('stageSplitter');
@@ -1459,32 +1540,38 @@ function bindWorkspaceSplitters() {
       applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
     });
   }
+
   if (stage) {
-    document.addEventListener('mousedown', e => {
-      if (window.innerWidth <= 760 || e.button !== 0) return;
-      const sr = stage.getBoundingClientRect();
-      if (e.clientX < sr.left - 2 || e.clientX > sr.right + 2 || e.clientY < sr.top - 5 || e.clientY > sr.bottom + 5) return;
+    stage.addEventListener('pointerdown', e => {
+      if (window.innerWidth <= 760) return;
       e.preventDefault();
+      const vp = $('viewport');
+      const startY = e.clientY, startH = vp.getBoundingClientRect().height;
       stage.classList.add('dragging');
-      const dock = $('timelineDock');
-      const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
+      stage.setPointerCapture(e.pointerId);
+
       const move = ev => {
-        const h = J.clamp(startH + (startY - ev.clientY), 96, 520);
-        S.project.ui.timelineDockHeight = Math.round(h);
+        const maxH = Math.max(180, window.innerHeight - 210);
+        S.project.ui.previewHeight = Math.round(J.clamp(startH + (ev.clientY - startY), 180, maxH));
         applyWorkspaceUi(); sizeViewport(); drawTimeline();
       };
-      const up = () => {
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
+      const up = ev => {
+        stage.removeEventListener('pointermove', move);
+        stage.removeEventListener('pointerup', up);
+        stage.removeEventListener('pointercancel', up);
+        try { if (stage.hasPointerCapture(ev.pointerId)) stage.releasePointerCapture(ev.pointerId); } catch (e) {}
         stage.classList.remove('dragging'); autosave();
       };
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', up);
+      stage.addEventListener('pointermove', move);
+      stage.addEventListener('pointerup', up);
+      stage.addEventListener('pointercancel', up);
     });
     stage.addEventListener('keydown', e => {
       if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
       e.preventDefault();
-      S.project.ui.timelineDockHeight = J.clamp((+S.project.ui.timelineDockHeight || 150) + (e.key === 'ArrowUp' ? 16 : -16), 96, 520);
+      const vp = $('viewport'), current = +(S.project.ui.previewHeight) || vp.getBoundingClientRect().height;
+      const maxH = Math.max(180, window.innerHeight - 210);
+      S.project.ui.previewHeight = Math.round(J.clamp(current + (e.key === 'ArrowDown' ? 16 : -16), 180, maxH));
       applyWorkspaceUi(); sizeViewport(); drawTimeline(); autosave();
     });
   }
@@ -1525,13 +1612,6 @@ function bind() {
   $('songTitle').addEventListener('input', e => { S.project.title = e.target.value; replanSoon(300); });
   $('songArtist').addEventListener('input', e => { S.project.artist = e.target.value; replanSoon(300); });
   $('btnSyntax').addEventListener('click', e => { const s = $('syntax'); s.hidden = !s.hidden; e.target.setAttribute('aria-expanded', String(!s.hidden)); });
-  $('imageFile').addEventListener('change', async e => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!f) return;
-    try { await addImageFile(f); }
-    catch (err) { showMsg('画像を追加できませんでした: ' + (err && err.message ? err.message : err)); setTimeout(() => showMsg(null), 3200); }
-  });
   $('bpm').addEventListener('change', e => { S.project.timing.bpm = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('offset').addEventListener('change', e => { S.project.timing.offset = Math.max(0, parseFloat(e.target.value) || 0); replan(); });
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
@@ -1774,7 +1854,7 @@ function bind() {
     else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey && !S.exporting) { e.preventDefault(); omakase(); }
   });
   $('lineList').addEventListener('scroll', () => { if (S.layoutMenu) closeLayoutMenu(); }, { passive: true });
-  window.addEventListener('resize', () => { closeLayoutMenu(); sizeViewport(); drawTimeline(); });
+  window.addEventListener('resize', () => { closeLayoutMenu(); applyWorkspaceUi(); sizeViewport(); drawTimeline(); });
   if (window.ResizeObserver) {
     new ResizeObserver(() => { sizeViewport(); drawTimeline(); }).observe($('viewport'));
     let lyricsResizeReady = false;
