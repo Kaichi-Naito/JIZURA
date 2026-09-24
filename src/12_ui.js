@@ -1555,21 +1555,26 @@ function bindWorkspaceSplitters() {
   if (stage) {
     stage.addEventListener('pointerdown', e => {
       if (window.innerWidth <= 760) return;
-      e.preventDefault(); stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId);
-      const host = stage.parentElement;
+      e.preventDefault();
+      stage.classList.add('dragging');
+      const host = stage.parentElement, dock = $('timelineDock');
+      const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
       const move = ev => {
         const hr = host.getBoundingClientRect();
         const maxH = Math.max(96, hr.height - 150);
-        const h = J.clamp(hr.bottom - ev.clientY - 14, 96, Math.min(520, maxH));
+        const h = J.clamp(startH + (startY - ev.clientY), 96, Math.min(520, maxH));
         S.project.ui.timelineDockHeight = Math.round(h);
         applyWorkspaceUi(); sizeViewport(); drawTimeline();
       };
-      const up = ev => {
-        stage.removeEventListener('pointermove', move); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up);
-        try { if (stage.hasPointerCapture(ev.pointerId)) stage.releasePointerCapture(ev.pointerId); } catch (e) {}
+      const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
         stage.classList.remove('dragging'); autosave();
       };
-      stage.addEventListener('pointermove', move); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', up);
     });
     stage.addEventListener('keydown', e => {
       if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
