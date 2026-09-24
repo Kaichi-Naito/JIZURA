@@ -102,10 +102,17 @@ jobs:
               await page.wait_for_timeout(180)
               await page.locator("#lineList").evaluate("el=>el.scrollTop=el.scrollHeight")
               before=await page.locator("#lineList").evaluate("el=>el.scrollTop")
-              cut=await page.evaluate("""() => { const c=J.ui.plan.cuts.find(c=>c.line===0); return {start:c.start,end:c.end,d:J.ui.plan.duration}; }""")
+              hit=await page.evaluate("""() => {
+                const h=J.ui.timelineCutHits.find(h => {
+                  const c=J.ui.plan.cuts[h.cutIndex]; return c && c.line===0;
+                });
+                return h && {x:h.x,y:h.y,w:h.w,h:h.h};
+              }""")
+              assert hit, "no timeline hit for line 0"
               tl=await page.locator("#timeline").bounding_box()
-              x=tl["x"]+((cut["start"]+cut["end"])/2)/cut["d"]*tl["width"]
-              y=tl["y"]+tl["height"]*.58
+              cs=await page.locator("#timeline").evaluate("el=>({w:el.width,h:el.height})")
+              x=tl["x"]+(hit["x"]+hit["w"]*.5)/cs["w"]*tl["width"]
+              y=tl["y"]+(hit["y"]+hit["h"]*.45)/cs["h"]*tl["height"]
               await page.mouse.click(x,y)
               await page.wait_for_timeout(120)
               nav=await page.evaluate("""() => {const l=document.querySelector('#lineList'),e=J.ui.lineEls[0],lr=l.getBoundingClientRect(),er=e.getBoundingClientRect(); return {scroll:l.scrollTop,visible:er.top>=lr.top-1&&er.bottom<=lr.bottom+1};}""")
