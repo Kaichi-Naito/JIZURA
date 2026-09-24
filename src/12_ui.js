@@ -656,6 +656,7 @@ function showMsg(m) { const el = $('viewMsg'); if (!m) { el.hidden = true; retur
 
 /* ---------------- viewport & drawing ---------------- */
 function sizeViewport() {
+  if (!S.plan) return;
   const vp = $('viewport'), c = $('view');
   const ar = S.plan.W / S.plan.H;
   let cssW = vp.clientWidth || 800, cssH = cssW / ar;
