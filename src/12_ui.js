@@ -48,10 +48,11 @@ function mergeProject(p) {
   for (const g of Object.keys(en)) en[g] = Object.assign(en[g], ((p && p.enabled) || {})[g] || {});
   o.enabled = en;
   o.overrides = (p && p.overrides) || {};
+  o.images = (p && p.images) || {};
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
-  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null }, (p && p.ui) || {});
+  o.ui = Object.assign({ lineSortByTime: false, lyricsHeight: null, leftWidth: 330, timelineDockHeight: 150 }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -149,17 +150,18 @@ function editorRedo() {
    Browsers do not expose a reusable full local file path from <input type=file>.
    Store the source audio bytes in IndexedDB for automatic restore, and embed them
    in an explicitly saved .jizura.json so the project remains portable. */
-const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio';
+const AUDIO_DB_NAME = 'jizura.assets.v1', AUDIO_STORE = 'audio', IMAGE_STORE = 'images';
 let audioDbJob = null;
 function openAudioDb() {
   if (!window.indexedDB) return Promise.resolve(null);
   if (audioDbJob) return audioDbJob;
   audioDbJob = new Promise((resolve, reject) => {
     let req;
-    try { req = indexedDB.open(AUDIO_DB_NAME, 1); } catch (e) { reject(e); return; }
+    try { req = indexedDB.open(AUDIO_DB_NAME, 2); } catch (e) { reject(e); return; }
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(AUDIO_STORE)) db.createObjectStore(AUDIO_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(IMAGE_STORE)) db.createObjectStore(IMAGE_STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('音源ストレージを開けませんでした'));
@@ -199,6 +201,41 @@ async function deleteStoredAudio(id) {
       tx.onerror = () => reject(tx.error);
     });
   } catch (e) { console.warn('audio cleanup', e); }
+}
+
+async function putStoredImage(meta, file) {
+  const db = await openAudioDb(); if (!db) throw new Error('このブラウザでは画像の自動保存を利用できません');
+  const blob = file instanceof Blob ? file.slice(0, file.size, file.type || meta.type || '') : new Blob([file], { type: meta.type || '' });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, 'readwrite');
+    tx.objectStore(IMAGE_STORE).put({ id: meta.id, name: meta.name, type: meta.type || '', size: blob.size, lastModified: meta.lastModified || 0, width: meta.width || 0, height: meta.height || 0, blob });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('画像を保存できませんでした'));
+    tx.onabort = () => reject(tx.error || new Error('画像の保存が中断されました'));
+  });
+}
+async function getStoredImage(id) {
+  if (!id) return null;
+  try {
+    const db = await openAudioDb(); if (!db) return null;
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readonly'), req = tx.objectStore(IMAGE_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.warn('image restore', e); return null; }
+}
+async function deleteStoredImage(id) {
+  if (!id) return;
+  try {
+    const db = await openAudioDb(); if (!db) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IMAGE_STORE, 'readwrite');
+      tx.objectStore(IMAGE_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('image cleanup', e); }
 }
 function newAudioId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
