@@ -264,13 +264,35 @@ J.exportMOVAlpha = async ({ plan, project, audio, onProgress, signal }) => {
   const fps = plan.fps, total = Math.max(1, Math.round(plan.duration * fps));
   const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d', { alpha: true });
+  const bgOpacity = J.clamp(Number.isFinite(+project.alphaBgOpacity) ? +project.alphaBgOpacity : 0, 0, 1);
+  // Alpha MOV is independent of the green/black key preview mode.
+  const alphaPlan = plan.keyBg ? Object.assign({}, plan, { keyBg: 'off' }) : plan;
+  const bgCanvas = bgOpacity > 0 ? document.createElement('canvas') : null;
+  const fgCanvas = bgOpacity > 0 ? document.createElement('canvas') : null;
+  let bgCtx = null, fgCtx = null;
+  if (bgCanvas) {
+    bgCanvas.width = fgCanvas.width = w; bgCanvas.height = fgCanvas.height = h;
+    bgCtx = bgCanvas.getContext('2d', { alpha: true });
+    fgCtx = fgCanvas.getContext('2d', { alpha: true });
+  }
   const R = new J.Renderer(), scale = w / plan.W;
   const frames = [], sizes = [];
   const prevRes = J.glyphs.maxRes; J.glyphs.maxRes = h >= 1000 ? 768 : 512;
   try {
     for (let i = 0; i < total; i++) {
       if (signal && signal.aborted) throw new Error('キャンセルしました');
-      R.frame(ctx, plan, i / fps, { scale, transparent: true });
+      const t = i / fps;
+      if (bgOpacity > 0) {
+        R.frame(bgCtx, alphaPlan, t, { scale, backgroundOnly: true });
+        R.frame(fgCtx, alphaPlan, t, { scale, transparent: true });
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+        ctx.clearRect(0, 0, w, h);
+        ctx.globalAlpha = bgOpacity; ctx.drawImage(bgCanvas, 0, 0);
+        ctx.globalAlpha = 1; ctx.drawImage(fgCanvas, 0, 0);
+      } else {
+        R.frame(ctx, alphaPlan, t, { scale, transparent: true });
+      }
       const blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNGフレームを作成できませんでした')), 'image/png'));
       frames.push(blob); sizes.push(blob.size);
       if (i % 2 === 0 || i === total - 1) {
@@ -322,7 +344,7 @@ J.exportMOVAlpha = async ({ plan, project, audio, onProgress, signal }) => {
   onProgress && onProgress(1, '完了');
   return {
     blob: new Blob(parts, { type: 'video/quicktime' }),
-    codec: 'PNG + Alpha', audio: pcm ? 'PCM' : null, width: w, height: h
+    codec: 'PNG + Alpha', audio: pcm ? 'PCM' : null, width: w, height: h, backgroundOpacity: bgOpacity
   };
 };
 
