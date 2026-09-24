@@ -1553,11 +1553,11 @@ function bindWorkspaceSplitters() {
     });
   }
   if (stage) {
-    stage.addEventListener('pointerdown', e => {
-      if (window.innerWidth <= 760) return;
+    stage.addEventListener('mousedown', e => {
+      if (window.innerWidth <= 760 || e.button !== 0) return;
       e.preventDefault();
       stage.classList.add('dragging');
-      const host = stage.parentElement, dock = $('timelineDock');
+      const dock = $('timelineDock');
       const startY = e.clientY, startH = dock ? dock.getBoundingClientRect().height : (+S.project.ui.timelineDockHeight || 150);
       const move = ev => {
         const h = J.clamp(startH + (startY - ev.clientY), 96, 520);
@@ -1565,14 +1565,12 @@ function bindWorkspaceSplitters() {
         applyWorkspaceUi(); sizeViewport(); drawTimeline();
       };
       const up = () => {
-        document.removeEventListener('pointermove', move);
-        document.removeEventListener('pointerup', up);
-        document.removeEventListener('pointercancel', up);
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
         stage.classList.remove('dragging'); autosave();
       };
-      document.addEventListener('pointermove', move);
-      document.addEventListener('pointerup', up);
-      document.addEventListener('pointercancel', up);
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
     });
     stage.addEventListener('keydown', e => {
       if (!['ArrowUp','ArrowDown'].includes(e.key)) return;
