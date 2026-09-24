@@ -7,6 +7,23 @@ const E = J.E;
 
 const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w | 0); c.height = Math.max(1, h | 0); return c; };
 
+J.imageAssetCache = J.imageAssetCache || new Map();
+J.ensureProjectImages = async project => {
+  const imgs = project && project.assets && project.assets.images ? project.assets.images : {};
+  const jobs = Object.entries(imgs).map(async ([id, a]) => {
+    if (!a || !a.dataUrl) return;
+    const cached = J.imageAssetCache.get(id);
+    if (cached && cached.src === a.dataUrl && cached.complete) return;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = a.dataUrl;
+    try { if (img.decode) await img.decode(); else await new Promise((res, rej) => { img.onload = res; img.onerror = rej; }); }
+    catch (e) { console.warn('image asset', id, e); return; }
+    J.imageAssetCache.set(id, img);
+  });
+  await Promise.all(jobs);
+};
+
 J.cutAt = (plan, t) => {
   const cs = plan.cuts; let lo = 0, hi = cs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
@@ -332,7 +349,28 @@ class Renderer {
   }
 
   drawCut(env) {
-    const cut = env.cut, L = J.LAYOUTS[cut.layout] || J.LAYOUTS.center;
+    const cut = env.cut;
+    if (cut && cut.assetId) {
+      if (env.pass !== 'main') return null;
+      const img = J.imageAssetCache && J.imageAssetCache.get(cut.assetId);
+      if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+      const pIn = J.E ? J.E.outCubic(env.pIn) : env.pIn;
+      const pOut = J.E ? J.E.inCubic(env.pOut) : env.pOut;
+      const a = J.clamp(pIn * (1 - pOut));
+      if (a <= 0.001) return null;
+      const maxW = env.W * (cut.params && cut.params.imageScale || 0.72);
+      const maxH = env.H * (cut.params && cut.params.imageScale || 0.72);
+      const fit = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+      const s = fit * J.lerp(0.94, 1, pIn) * J.lerp(1, 0.97, pOut);
+      const w = img.naturalWidth * s, h = img.naturalHeight * s;
+      const x = (env.W - w) / 2, y = (env.H - h) / 2;
+      env.ctx.save();
+      env.ctx.globalAlpha = a;
+      env.ctx.drawImage(img, x, y, w, h);
+      env.ctx.restore();
+      return { x, y, w, h };
+    }
+    const L = J.LAYOUTS[cut.layout] || J.LAYOUTS.center;
     const decor = cut.decor || [];
     for (const d of decor) { const D = J.DECOR[d.id]; if (D && D.layer === 'back') try { D.draw(env, null, d); } catch (e) { console.warn(e); } }
     let bb = null;
