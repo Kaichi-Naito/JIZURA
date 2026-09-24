@@ -51,6 +51,7 @@ function mergeProject(p) {
   o.previewVolume = J.clamp(Number.isFinite(+(p && p.previewVolume)) ? +(p && p.previewVolume) : 1, 0, 2);
   o.colors = Object.assign({ enabled: false }, (p && p.colors) || {});
   o.fonts = (p && p.fonts) || {};
+  o.ui = Object.assign({ lineSortByTime: false }, (p && p.ui) || {});
   o.userFonts = (p && p.userFonts) || [];
   for (const uf of o.userFonts) if (!J.FONTS[uf.key]) J.addUserFont(uf.key, uf.label, uf.family, uf.weight || 400);
   return o;
@@ -358,12 +359,25 @@ function remapLineIndexedState(oldRaw, newRaw) {
   const oldToNew = {};
   for (const [nj, oi] of Object.entries(map)) oldToNew[oi] = +nj;
   const oldBounds = (S.project.timing || {}).cutBoundaries || {}, newBounds = {};
+  const remapCutId = id => {
+    if (id === 'title') return 'title';
+    let m = id.match(/^(-?\d+):(\d+)$/);
+    if (m) {
+      const ni = oldToNew[m[1]];
+      return ni == null ? null : ni + ':' + m[2];
+    }
+    m = id.match(/^(-?\d+):i$/);
+    if (m) {
+      const ni = oldToNew[m[1]];
+      return ni == null ? null : ni + ':i';
+    }
+    return null;
+  };
   for (const [key, value] of Object.entries(oldBounds)) {
-    const m = key.match(/^(-?\d+):(\d+)>(-?\d+):(\d+)$/);
-    if (!m) continue;
-    const l = oldToNew[m[1]], r = oldToNew[m[3]];
-    if (l == null || r == null) continue;
-    newBounds[l + ':' + m[2] + '>' + r + ':' + m[4]] = value;
+    const parts = key.split('>');
+    if (parts.length !== 2) continue;
+    const a = remapCutId(parts[0]), b = remapCutId(parts[1]);
+    if (a && b) newBounds[a + '>' + b] = value;
   }
   S.project.timing.cutBoundaries = newBounds;
   S.project.overrides = remap(S.project.overrides || {});
@@ -1219,6 +1233,7 @@ function updateTap() { const ln = S.plan.lines[S.tap.i]; $('tapLine').textConten
 
 /* ---------------- sync all inputs from project ---------------- */
 function syncUI() {
+  S.lineSortByTime = !!(S.project.ui && S.project.ui.lineSortByTime);
   $('songTitle').value = S.project.title || ''; $('songArtist').value = S.project.artist || '';
   $('lyrics').value = S.project.lyrics;
   $('bpm').value = S.project.timing.bpm > 0 ? S.project.timing.bpm : '';
@@ -1251,7 +1266,11 @@ function bind() {
   $('lineScale').addEventListener('change', e => { S.project.timing.lineScale = J.clamp(parseFloat(e.target.value) || 1, 0.3, 4); replan(); });
   $('snap').addEventListener('change', e => { S.project.timing.snap = e.target.checked; replan(); });
   $('btnResetTimes').addEventListener('click', () => { S.project.timing.lineTimes = {}; replan(); });
-  $('btnSortLines').addEventListener('click', () => { S.lineSortByTime = !S.lineSortByTime; renderLines(); updateCutInfo(); });
+  $('btnSortLines').addEventListener('click', () => {
+    S.lineSortByTime = !S.lineSortByTime;
+    S.project.ui = Object.assign({}, S.project.ui || {}, { lineSortByTime: S.lineSortByTime });
+    renderLines(); updateCutInfo(); autosave();
+  });
   $('audioFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) loadAudioFile(f); });
   $('previewVolume').addEventListener('input', e => {
     const pct = J.clamp(+e.target.value || 0, 0, 200);
